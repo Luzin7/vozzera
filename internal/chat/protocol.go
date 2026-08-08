@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Tipos de evento que trafegam no WS (nos dois sentidos).
 const (
 	EventMessage  = "message"  // cliente → servidor → todos
 	EventJoin     = "join"     // cliente → servidor (entrar numa sala)
@@ -22,7 +21,6 @@ type InboundEvent struct {
 }
 
 // OutboundEvent é o que o servidor devolve. Sempre com identidade resolvida
-// no servidor — NUNCA confie no username que o cliente mandar.
 type OutboundEvent struct {
 	Type      string    `json:"type"`
 	ID        uuid.UUID `json:"id,omitempty"`
