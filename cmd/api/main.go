@@ -9,6 +9,7 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/chat"
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
 	shareddb "github.com/Luzin7/vozzera-backend/internal/shared/db"
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 )
 
 func main() {
@@ -29,23 +30,25 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	auth.RegisterHandlers(mux, authQueries, cfg.JWTSecret, cfg.InviteCode)
-
-	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("auth_token")
+	authMw := httpx.Auth(func(token string) (httpx.UserClaims, error) {
+		claims, err := auth.ParseToken(cfg.JWTSecret, token)
 		if err != nil {
+			return httpx.UserClaims{}, err
+		}
+		return httpx.UserClaims{UserID: claims.UserID, Username: claims.Username}, nil
+	})
+
+	auth.RegisterHandlers(mux, authQueries, cfg.JWTSecret, cfg.InviteCode)
+	chat.RegisterHandlers(mux, chatQueries, authMw)
+
+	mux.Handle("GET /ws", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := httpx.UserFromContext(r.Context())
+		if !ok {
 			http.Error(w, "Não autenticado", http.StatusUnauthorized)
 			return
 		}
-
-		claims, err := auth.ParseToken(cfg.JWTSecret, cookie.Value)
-		if err != nil {
-			http.Error(w, "Token inválido", http.StatusUnauthorized)
-			return
-		}
-
-		chat.ServeWs(hub, w, r, claims.UserID, claims.Username)
-	})
+		chat.ServeWs(hub, w, r, user.UserID, user.Username)
+	})))
 
 	log.Printf("Servidor rodando na porta :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {
