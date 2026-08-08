@@ -22,8 +22,9 @@ func main() {
 	defer pool.Close()
 
 	authQueries := auth.New(pool)
+	chatQueries := chat.New(pool)
 
-	hub := chat.NewHub()
+	hub := chat.NewHub(chatQueries)
 	go hub.Run()
 
 	mux := http.NewServeMux()
