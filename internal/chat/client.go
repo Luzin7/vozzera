@@ -29,13 +29,20 @@ func (c *Client) readPump() {
 			}
 			break
 		}
-		event := OutboundEvent{
-			UserID:   c.UserID,
-			Content:  string(message),
-			Type:     EventMessage,
-			Username: c.Username,
+
+		var in InboundEvent
+		if err := json.Unmarshal(message, &in); err != nil {
+			log.Printf("Erro ao desserializar evento: %v", err)
+			continue
 		}
-		data, err := json.Marshal(event)
+
+		out := OutboundEvent{
+			Type:     EventMessage,
+			UserID:   c.UserID,
+			Username: c.Username,
+			Content:  in.Content,
+		}
+		data, err := json.Marshal(out)
 		if err != nil {
 			log.Printf("Erro ao serializar evento: %v", err)
 			continue
