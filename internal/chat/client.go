@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"log"
 
 	"github.com/google/uuid"
@@ -28,7 +29,25 @@ func (c *Client) readPump() {
 			}
 			break
 		}
-		c.hub.broadcast <- message
+
+		var in InboundEvent
+		if err := json.Unmarshal(message, &in); err != nil {
+			log.Printf("Erro ao desserializar evento: %v", err)
+			continue
+		}
+
+		out := OutboundEvent{
+			Type:     EventMessage,
+			UserID:   c.UserID,
+			Username: c.Username,
+			Content:  in.Content,
+		}
+		data, err := json.Marshal(out)
+		if err != nil {
+			log.Printf("Erro ao serializar evento: %v", err)
+			continue
+		}
+		c.hub.broadcast <- data
 	}
 }
 
