@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 
@@ -36,17 +37,31 @@ func (c *Client) readPump() {
 			continue
 		}
 
+		msgDB, err := c.hub.queries.CreateMessage(context.Background(), CreateMessageParams{
+			RoomID:  in.RoomID,
+			UserID:  c.UserID,
+			Content: in.Content,
+		})
+		if err != nil {
+			log.Printf("Erro ao salvar mensagem no banco de dados: %v", err)
+			continue
+		}
+
 		out := OutboundEvent{
-			Type:     EventMessage,
-			UserID:   c.UserID,
-			Username: c.Username,
-			Content:  in.Content,
+			Type:      EventMessage,
+			ID:        msgDB.ID,
+			RoomID:    msgDB.RoomID,
+			UserID:    c.UserID,
+			Username:  c.Username,
+			Content:   msgDB.Content,
+			CreatedAt: msgDB.CreatedAt.Time,
 		}
 		data, err := json.Marshal(out)
 		if err != nil {
 			log.Printf("Erro ao serializar evento: %v", err)
 			continue
 		}
+
 		c.hub.broadcast <- data
 	}
 }

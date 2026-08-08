@@ -11,7 +11,7 @@ services:
     volumes:
       - ./.docker/pg:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d vozzera"]
       interval: 10s
       timeout: 5s
       retries: 5

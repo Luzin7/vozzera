@@ -5,14 +5,16 @@ type Hub struct {
 	broadcast  chan []byte
 	register   chan *Client
 	unregister chan *Client
+	queries    *Queries
 }
 
-func NewHub() *Hub {
+func NewHub(queries *Queries) *Hub {
 	return &Hub{
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
+		queries:    queries,
 	}
 }
 
