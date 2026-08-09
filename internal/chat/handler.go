@@ -42,6 +42,10 @@ func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rooms == nil {
+		rooms = []Room{}
+	}
+
 	writeJSON(w, http.StatusOK, rooms)
 }
 
