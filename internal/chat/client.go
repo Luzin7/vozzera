@@ -38,6 +38,15 @@ func (c *Client) readPump() {
 			continue
 		}
 
+		switch in.Type {
+		case EventJoin:
+			c.hub.join <- roomJoin{client: c, roomID: in.RoomID}
+			continue
+		case EventMessage:
+		default:
+			continue
+		}
+
 		msgDB, err := c.hub.queries.CreateMessage(context.Background(), CreateMessageParams{
 			RoomID:  in.RoomID,
 			UserID:  c.UserID,
