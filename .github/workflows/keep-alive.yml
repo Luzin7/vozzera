@@ -1,0 +1,21 @@
+name: Render Keep-Alive
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render API
+        run: |
+          echo "Enviando ping para manter o Render acordado..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://vozzera-sha-ae9fd4f.onrender.com/api/rooms)
+          echo "Status recebido: $response"
+          if [ "$response" -eq 401 ] || [ "$response" -eq 200 ]; then
+            echo "Servidor está acordado!"
+          else
+            echo "Aviso: Servidor respondeu com status inesperado ($response)."
+          fi
