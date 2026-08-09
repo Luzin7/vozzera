@@ -1,4 +1,3 @@
-# Altere de 1.22 para 1.25 (ou superior) no stage do builder
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
@@ -8,7 +7,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o server .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o server ./cmd/api
 
 FROM alpine:latest
 
