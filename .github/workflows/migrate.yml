@@ -1,0 +1,26 @@
+name: Run Database Migrations
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'sql/migrations/**'
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Postgres Client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run SQL Migration against Neon
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "A aplicar migrações no Neon..."
+          psql "$DATABASE_URL" -f sql/migrations/001_init.sql
+          echo "Migrações aplicadas com sucesso!"
