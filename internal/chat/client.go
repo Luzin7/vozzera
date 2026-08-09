@@ -15,6 +15,7 @@ type Client struct {
 	send     chan []byte
 	UserID   uuid.UUID
 	Username string
+	Rooms    map[uuid.UUID]bool
 }
 
 func (c *Client) readPump() {
@@ -37,6 +38,15 @@ func (c *Client) readPump() {
 			continue
 		}
 
+		switch in.Type {
+		case EventJoin:
+			c.hub.join <- roomJoin{client: c, roomID: in.RoomID}
+			continue
+		case EventMessage:
+		default:
+			continue
+		}
+
 		msgDB, err := c.hub.queries.CreateMessage(context.Background(), CreateMessageParams{
 			RoomID:  in.RoomID,
 			UserID:  c.UserID,
@@ -56,13 +66,8 @@ func (c *Client) readPump() {
 			Content:   msgDB.Content,
 			CreatedAt: msgDB.CreatedAt.Time,
 		}
-		data, err := json.Marshal(out)
-		if err != nil {
-			log.Printf("Erro ao serializar evento: %v", err)
-			continue
-		}
 
-		c.hub.broadcast <- data
+		c.hub.broadcast <- out
 	}
 }
 

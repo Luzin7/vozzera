@@ -126,6 +126,7 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID uuid.UUID,
 		send:     make(chan []byte, 256),
 		UserID:   userID,
 		Username: username,
+		Rooms:    make(map[uuid.UUID]bool),
 	}
 	client.hub.register <- client
 
