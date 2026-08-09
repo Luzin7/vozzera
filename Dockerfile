@@ -1,4 +1,5 @@
-FROM golang:1.22-alpine AS builder
+# Altere de 1.22 para 1.25 (ou superior) no stage do builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
