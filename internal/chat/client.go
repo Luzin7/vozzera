@@ -4,9 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+)
+
+const (
+	writeWait  = 10 * time.Second
+	pongWait   = 60 * time.Second
+	pingPeriod = (pongWait * 9) / 10
 )
 
 type Client struct {
@@ -23,6 +30,14 @@ func (c *Client) readPump() {
 		c.hub.unregister <- c
 		c.conn.Close()
 	}()
+
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
@@ -42,40 +57,70 @@ func (c *Client) readPump() {
 		case EventJoin:
 			c.hub.join <- roomJoin{client: c, roomID: in.RoomID}
 			continue
+
 		case EventMessage:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			msgDB, err := c.hub.queries.CreateMessage(ctx, CreateMessageParams{
+				RoomID:  in.RoomID,
+				UserID:  c.UserID,
+				Content: in.Content,
+			})
+			cancel()
+
+			if err != nil {
+				log.Printf("Erro ao salvar mensagem no banco de dados (timeout ou falha): %v", err)
+				continue
+			}
+
+			out := OutboundEvent{
+				Type:      EventMessage,
+				ID:        msgDB.ID,
+				RoomID:    msgDB.RoomID,
+				UserID:    c.UserID,
+				Username:  c.Username,
+				Content:   msgDB.Content,
+				CreatedAt: msgDB.CreatedAt.Time,
+			}
+
+			c.hub.broadcast <- out
+			continue
+
 		default:
 			continue
 		}
-
-		msgDB, err := c.hub.queries.CreateMessage(context.Background(), CreateMessageParams{
-			RoomID:  in.RoomID,
-			UserID:  c.UserID,
-			Content: in.Content,
-		})
-		if err != nil {
-			log.Printf("Erro ao salvar mensagem no banco de dados: %v", err)
-			continue
-		}
-
-		out := OutboundEvent{
-			Type:      EventMessage,
-			ID:        msgDB.ID,
-			RoomID:    msgDB.RoomID,
-			UserID:    c.UserID,
-			Username:  c.Username,
-			Content:   msgDB.Content,
-			CreatedAt: msgDB.CreatedAt.Time,
-		}
-
-		c.hub.broadcast <- out
 	}
 }
 
 func (c *Client) writePump() {
-	defer c.conn.Close()
-	for message := range c.send {
-		if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-			return
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+
+			w, err := c.conn.NextWriter(websocket.TextMessage)
+			if err != nil {
+				return
+			}
+			w.Write(message)
+
+			if err := w.Close(); err != nil {
+				return
+			}
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }
