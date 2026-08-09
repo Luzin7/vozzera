@@ -32,6 +32,7 @@ func RegisterHandlers(mux *http.ServeMux, queries *Queries, authMw func(http.Han
 	mux.Handle("GET /api/rooms", authMw(http.HandlerFunc(h.handleListRooms)))
 	mux.Handle("POST /api/rooms", authMw(http.HandlerFunc(h.handleCreateRoom)))
 	mux.Handle("GET /api/rooms/{id}/messages", authMw(http.HandlerFunc(h.handleGetMessages)))
+	mux.Handle("DELETE /api/rooms/{id}", authMw(http.HandlerFunc(h.handleDeleteRoom)))
 }
 
 func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +77,23 @@ func (h *Handler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, room)
+}
+
+func (h *Handler) handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
+	roomID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
+		return
+	}
+
+	_, err = h.queries.DeleteRoom(r.Context(), roomID)
+	if err != nil {
+		log.Printf("erro ao excluir sala: %v", err)
+		http.Error(w, "Erro ao excluir sala", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {

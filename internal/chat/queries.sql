@@ -25,3 +25,8 @@ ORDER BY name ASC;
 INSERT INTO rooms (name, type)
 VALUES ($1, $2)
 RETURNING id, name, type, created_at;
+
+-- name: DeleteRoom :one
+DELETE FROM rooms
+WHERE id = $1
+RETURNING id;
