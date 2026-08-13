@@ -1,0 +1,78 @@
+name: 🐛 Bug report
+description: Algo não está se comportando como esperado
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por reportar. Antes de preencher, verifique se já existe uma issue igual aberta.
+  - type: textarea
+    id: descricao
+    attributes:
+      label: Descrição
+      description: O que está acontecendo, em uma ou duas frases.
+    validations:
+      required: true
+  - type: textarea
+    id: passos
+    attributes:
+      label: Passos pra reproduzir
+      description: Lista numerada, do jeito mais concreto possível (comandos, payloads, etc).
+      placeholder: |
+        1. Rodei `make run` e entrei na sala X
+        2. Mandei `POST /api/rooms` com `{"name":"x","type":"voice"}`
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Comportamento esperado
+      description: O que você achava que ia acontecer.
+    validations:
+      required: true
+  - type: textarea
+    id: atual
+    attributes:
+      label: Comportamento atual
+      description: O que aconteceu de fato. Cole logs se houver.
+    validations:
+      required: true
+  - type: input
+    id: go-version
+    attributes:
+      label: Versão do Go
+      description: Saída de `go version`.
+      placeholder: "go1.26.0 linux/amd64"
+    validations:
+      required: true
+  - type: dropdown
+    id: ambiente
+    attributes:
+      label: Ambiente
+      options:
+        - Dev local (Linux)
+        - Dev local (macOS)
+        - Dev local (Windows)
+        - Deploy próprio (Docker)
+        - Outro
+    validations:
+      required: true
+  - type: dropdown
+    id: voip
+    attributes:
+      label: Voz usando
+      options:
+        - LiveKit Cloud
+        - LiveKit self-hosted
+        - Não aplicável (problema não é em voz)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs relevantes
+      description: Cole aqui a saída do servidor (especialmente do `go run -race`, que mostra race conditions com arquivo e linha).
+      render: shell
+    validations:
+      required: false

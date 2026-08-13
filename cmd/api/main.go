@@ -43,7 +43,7 @@ func main() {
 	issuer := voice.NewTokenIssuer(cfg.LiveKitAPIKey, cfg.LiveKitAPISecret)
 
 	auth.RegisterHandlers(mux, authQueries, cfg.JWTSecret, cfg.InviteCode)
-	chat.RegisterHandlers(mux, chatQueries, authMw)
+	chat.RegisterHandlers(mux, chatQueries, hub, authMw)
 	voice.RegisterHandlers(mux, voiceQueries, issuer, cfg.LiveKitURL, authMw)
 
 	mux.Handle("GET /ws", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

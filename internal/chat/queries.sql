@@ -25,3 +25,9 @@ ORDER BY name ASC;
 INSERT INTO rooms (name, type)
 VALUES ($1, $2)
 RETURNING id, name, type, created_at;
+
+-- name: UpdateMessage :one
+UPDATE messages
+SET content = $1, updated_at = NOW()
+WHERE id = $2 AND user_id = $3
+RETURNING id, room_id, content, updated_at;

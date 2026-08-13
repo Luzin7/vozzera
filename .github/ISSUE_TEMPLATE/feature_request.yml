@@ -1,0 +1,62 @@
+name: ✨ Feature request
+description: Sugestão de nova funcionalidade ou mudança
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado pela sugestão. Tente deixar o "por quê" mais claro que o "o quê" — pode ser que a solução de menor esforço ao problema real seja diferente da que você imaginou.
+  - type: textarea
+    id: problema
+    attributes:
+      label: Problema que resolve
+      description: Que situação concreta você não consegue resolver hoje?
+    validations:
+      required: true
+  - type: textarea
+    id: solucao
+    attributes:
+      label: Solução proposta
+      description: O que você imagina que deveria existir (endpoint, evento WS, coluna, configuração, etc).
+    validations:
+      required: true
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas consideradas
+      description: Outras formas de resolver que você descartou — e por quê.
+    validations:
+      required: false
+  - type: dropdown
+    id: dominio
+    attributes:
+      label: Domínio afetado
+      options:
+        - auth
+        - chat
+        - voice
+        - shared
+        - sql/migrations
+        - infra/CI
+        - novo domínio
+    validations:
+      required: true
+  - type: dropdown
+    id: impacto
+    attributes:
+      label: Camada que toca
+      options:
+        - Apenas backend (Go)
+        - Apenas infra (Docker, CI, makefile)
+        - Exige mudança no cliente (nova rota/evento/campo de resposta)
+        - Exige migration
+        - Não sei dizer
+    validations:
+      required: true
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto extra
+      description: Mocks, exemplos de outras ferramentas, links — qualquer coisa que ajude a visualizar.
+    validations:
+      required: false

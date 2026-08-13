@@ -25,27 +25,41 @@ Cada domínio é **auto-contido**: handler, service, queries SQL e código gerad
     queries.sql.go         # (Gerado pelo sqlc — NÃO editar)
 
   /chat
-    hub.go                 # Hub struct, map de clients, channels register/unregister/broadcast
+    hub.go                 # Hub struct, map de clients, channels register/unregister/join/broadcast
     client.go              # Conexão WS individual com UserID/Username, readPump/writePump
-    handler.go             # Handshake HTTP → WS (ServeWs com identidade do usuário)
-    queries.sql            # Consultas de histórico de canais e rooms
+    handler.go             # Rotas REST de rooms/mensagens, ServeWs (handshake HTTP→WS) e PATCH de edição
+    protocol.go            # InboundEvent / OutboundEvent — envelope JSON do WebSocket
+    queries.sql            # CreateMessage, GetMessagesByRoom, ListRooms, CreateRoom, UpdateMessage
     db.go                  # (Gerado pelo sqlc)
     models.go              # (Gerado pelo sqlc)
     queries.sql.go         # (Gerado pelo sqlc)
 
   /voice
-    handler.go             # Endpoints para listar salas de voz
-    livekit.go             # Integração com livekit-server-sdk-go (geração de tokens)
+    handler.go             # POST /api/voice/token e GET /api/voice/rooms
+    livekit.go             # TokenIssuer — assina JWT do LiveKit (protocol/auth, não o server-sdk)
+    queries.sql            # GetRoomByID, ListVoiceRooms
+    db.go                  # (Gerado pelo sqlc)
+    models.go              # (Gerado pelo sqlc)
+    queries.sql.go         # (Gerado pelo sqlc)
 
   /shared                  # ÚNICO lugar para código compartilhado entre domínios
     /db                    # Conexão base do pgxpool
     /config                # Carregamento de env vars (godotenv)
+    /httpx                 # Middleware de auth (UserFromContext, Auth()), CORS
 
 /sql
-  /migrations              # Arquivos .sql puros para goose ou migrate
+  /migrations              # Arquivos .sql puros, um por migration (goose)
 ```
 
 **Regra:** se `chat` precisa de algo de `auth` (ex: validar token), isso é feito no `main.go` (injeção) ou vai pra `shared/`. Nunca `import "internal/auth"` de dentro de `internal/chat`.
+
+### Pontos de atenção com estado compartilhado (Hub)
+
+O `Hub` guarda estado em memória (map de clientes por sala) e tem uma goroutine própria (`Run()` que consome os canais `register`/`unregister`/`join`/`broadcast`). Por isso ele é **injetado uma única vez em `main.go`** e repassado pra `chat.RegisterHandlers`. Não é recriado dentro de `RegisterHandlers`.
+
+O `handleUpdateMessage` dispara `h.hub.broadcast <- event` pra notificar os clientes WebSocket da edição. Isso só funciona porque o `Hub` que o handler recebe é o mesmo que tem `Run()` rodando e onde os clientes WS estão registrados. Se cada ponto de entrada criasse seu próprio `Hub`, a edição seria despejada num canal que ninguém consome e os clientes nunca saberiam dela.
+
+**Princípio geral:** qualquer objeto com estado compartilhado + goroutine própria (Hub, pool de DB) é instanciado em `main` e *passado* adiante por parâmetro. Função que precisa chamar método de X → X entra como parâmetro, nunca é instanciado dentro.
 
 ---
 
@@ -141,10 +155,10 @@ Para usar no código do domínio, basta chamar `auth.New(pool)` ou `chat.New(poo
 | Domínio    | Status       | Detalhes |
 |------------|-------------|----------|
 | **Auth**   | Funcional   | `handler.go`: register com invite code + login com JWT 30d via cookie HttpOnly. `service.go`: HashPassword, CheckPassword, GenerateToken, ParseToken. Queries: `CreateUser`, `GetUserByUsername`. |
-| **Chat**   | Funcional   | `hub.go`: broker pattern com map + channels. `client.go`: readPump/writePump com backpressure handling. `handler.go`: ServeWs recebe userID/username do JWT. Queries: `CreateMessage`, `GetMessagesByRoom`, `ListRooms`, `CreateRoom`. |
-| **Voice**  | Vazio       | Diretório existe, implementação do LiveKit pendente. |
-| **Shared** | Funcional   | `config.go`: Load() com godotenv. `db.go`: Connect() retorna *pgxpool.Pool com ping. |
-| **Main**   | Funcional   | Carrega config → conecta pool → cria auth queries → cria hub → registra rotas auth + WS (com JWT validation no handshake). |
+| **Chat**   | Funcional   | `hub.go`: broker pattern com map + channels, singleton injetado pelo `main.go`. `client.go`: readPump/writePump com backpressure handling (ping/pong/deadlines). `handler.go`: ServeWs, `GET/POST /api/rooms`, `GET /api/rooms/{id}/messages`, `PATCH /api/rooms/{id}/messages/{content_id}` (edição com broadcast `message_edited`). Queries: `CreateMessage`, `GetMessagesByRoom`, `ListRooms`, `CreateRoom`, `UpdateMessage`. |
+| **Voice**  | Funcional   | `livekit.go`: `TokenIssuer` assina JWT do LiveKit via `protocol/auth`. `handler.go`: `POST /api/voice/token` (valida sala, exige `type=voice`, assina token) e `GET /api/voice/rooms`. Queries: `GetRoomByID`, `ListVoiceRooms`. |
+| **Shared** | Funcional   | `config.go`: `Load()` com godotenv. `db.go`: `Connect()` retorna `*pgxpool.Pool`. `httpx/`: `Auth()` põe user no context, `UserFromContext()`, `CORS()` (provisório — reflete qualquer origin, ver T2 do roadmap). |
+| **Main**   | Funcional   | Carrega config → conecta pool → cria `auth/chat/voice` queries → cria `Hub` único e dispara `go hub.Run()` → registra rotas REST/WS com middleware de auth. O `Hub` é injetado em `ServeWs` e em `chat.RegisterHandlers` — mesma instância. |
 
 ### Dependências (`go.mod`)
 

@@ -1,7 +1,9 @@
 package chat
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"slices"
@@ -19,19 +21,24 @@ var upgrader = websocket.Upgrader{
 
 type Handler struct {
 	queries *Queries
+	hub     *Hub
 }
 
 type CreateRoomRequest struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
 }
+type UpdateMessageRequest struct {
+	Content string `json:"content"`
+}
 
-func RegisterHandlers(mux *http.ServeMux, queries *Queries, authMw func(http.Handler) http.Handler) {
-	h := &Handler{queries: queries}
+func RegisterHandlers(mux *http.ServeMux, queries *Queries, hub *Hub, authMw func(http.Handler) http.Handler) {
+	h := &Handler{queries: queries, hub: hub}
 
 	mux.Handle("GET /api/rooms", authMw(http.HandlerFunc(h.handleListRooms)))
 	mux.Handle("POST /api/rooms", authMw(http.HandlerFunc(h.handleCreateRoom)))
 	mux.Handle("GET /api/rooms/{id}/messages", authMw(http.HandlerFunc(h.handleGetMessages)))
+	mux.Handle("PATCH /api/rooms/{id}/messages/{content_id}", authMw(http.HandlerFunc(h.handleUpdateMessage)))
 }
 
 func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +116,65 @@ func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, messages)
+}
+
+func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
+	roomID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
+		return
+	}
+
+	contentID, err := uuid.Parse(r.PathValue("content_id"))
+	if err != nil {
+		http.Error(w, "ID de conteúdo inválido", http.StatusBadRequest)
+		return
+	}
+
+	userID, ok := r.Context().Value("userID").(uuid.UUID)
+	if !ok {
+		http.Error(w, "Não autorizado", http.StatusUnauthorized)
+		return
+	}
+
+	var req UpdateMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+
+	if req.Content == "" {
+		http.Error(w, "O conteúdo não pode ser vazio", http.StatusBadRequest)
+		return
+	}
+
+	msg, err := h.queries.UpdateMessage(r.Context(), UpdateMessageParams{
+		Content: req.Content,
+		ID:      contentID,
+		UserID:  userID,
+	})
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "Mensagem não encontrada ou você não tem permissão para editá-la", http.StatusForbidden)
+			return
+		}
+
+		log.Printf("erro ao atualizar mensagem: %v", err)
+		http.Error(w, "Erro interno ao atualizar mensagem", http.StatusInternalServerError)
+		return
+	}
+
+	h.hub.broadcast <- OutboundEvent{
+		Type:      "message_edited",
+		ID:        msg.ID,
+		RoomID:    roomID,
+		UserID:    userID,
+		Content:   msg.Content,
+		UpdatedAt: msg.UpdatedAt.Time,
+	}
+
+	writeJSON(w, http.StatusOK, msg)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
