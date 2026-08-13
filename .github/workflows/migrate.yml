@@ -14,13 +14,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Postgres Client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install Goose
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/pressly/goose/master/install.sh | sh
+          echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: Run SQL Migration against Neon
+      - name: Run Migrations on Neon
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          echo "A aplicar migrações no Neon..."
-          psql "$DATABASE_URL" -f sql/migrations/001_init.sql
+          echo "Aplicando migrações com Goose no Neon..."
+          goose -dir sql/migrations postgres "$DATABASE_URL" up
           echo "Migrações aplicadas com sucesso!"
