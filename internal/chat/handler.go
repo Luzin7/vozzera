@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -131,11 +132,13 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := r.Context().Value("userID").(uuid.UUID)
+	claims, ok := httpx.UserFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Não autorizado", http.StatusUnauthorized)
 		return
 	}
+
+	userID := claims.UserID
 
 	var req UpdateMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -156,7 +159,11 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "Mensagem não encontrada ou você não tem permissão para editá-la", http.StatusForbidden)
+			http.Error(
+				w,
+				"Mensagem não encontrada ou você não tem permissão para editá-la",
+				http.StatusForbidden,
+			)
 			return
 		}
 
@@ -166,7 +173,8 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.hub.broadcast <- OutboundEvent{
-		Type:      "message_edited",
+		Type:      EventMessage,
+		Action:    MessageUpdated,
 		ID:        msg.ID,
 		RoomID:    roomID,
 		UserID:    userID,
@@ -176,7 +184,6 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, msg)
 }
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
