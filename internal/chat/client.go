@@ -74,6 +74,7 @@ func (c *Client) readPump() {
 
 			out := OutboundEvent{
 				Type:      EventMessage,
+				Action:    MessageCreated,
 				ID:        msgDB.ID,
 				RoomID:    msgDB.RoomID,
 				UserID:    c.UserID,

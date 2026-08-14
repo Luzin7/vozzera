@@ -56,7 +56,11 @@ func main() {
 	})))
 
 	log.Printf("Servidor rodando na porta :%s", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, httpx.CORS(mux)); err != nil {
+
+	loggedMux := httpx.Logger(mux)
+
+	finalHandler := httpx.CORS(loggedMux)
+	if err := http.ListenAndServe(":"+cfg.Port, finalHandler); err != nil {
 		log.Fatal(err)
 	}
 }
