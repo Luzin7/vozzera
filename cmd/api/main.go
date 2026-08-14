@@ -11,6 +11,7 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
 	shareddb "github.com/Luzin7/vozzera-backend/internal/shared/db"
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
+	"github.com/Luzin7/vozzera-backend/internal/swagger"
 	"github.com/Luzin7/vozzera-backend/internal/voice"
 )
 
@@ -55,6 +56,7 @@ func main() {
 	auth.RegisterHandlers(mux, authQueries, cfg.JWTSecret, cfg.InviteCode)
 	chat.RegisterHandlers(mux, chatQueries, hub, authMw)
 	voice.RegisterHandlers(mux, voiceQueries, issuer, cfg.LiveKitURL, authMw)
+	swagger.RegisterHandlers(mux)
 
 	mux.Handle("GET /ws", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := httpx.UserFromContext(r.Context())
