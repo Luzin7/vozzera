@@ -13,9 +13,10 @@ type Message struct {
 	ID        uuid.UUID          `json:"id"`
 	RoomID    uuid.UUID          `json:"room_id"`
 	UserID    uuid.UUID          `json:"user_id"`
-	Content   string             `json:"content"`
+	Content   pgtype.Text        `json:"content"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type Room struct {

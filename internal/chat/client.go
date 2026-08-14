@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -63,7 +64,7 @@ func (c *Client) readPump() {
 			msgDB, err := c.hub.queries.CreateMessage(ctx, CreateMessageParams{
 				RoomID:  in.RoomID,
 				UserID:  c.UserID,
-				Content: in.Content,
+				Content: pgtype.Text{String: in.Content, Valid: true},
 			})
 			cancel()
 
@@ -79,7 +80,7 @@ func (c *Client) readPump() {
 				RoomID:    msgDB.RoomID,
 				UserID:    c.UserID,
 				Username:  c.Username,
-				Content:   msgDB.Content,
+				Content:   msgDB.Content.String,
 				CreatedAt: msgDB.CreatedAt.Time,
 			}
 
