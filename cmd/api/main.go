@@ -104,7 +104,7 @@ func main() {
 }
 
 func cleanupExpiredSessions(queries *auth.Queries) {
-	ticker := time.NewTicker(time.Hour)
+	ticker := time.NewTicker(time.Hour * 24)
 	defer ticker.Stop()
 
 	for range ticker.C {
