@@ -12,6 +12,7 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var upgrader = websocket.Upgrader{
@@ -40,6 +41,7 @@ func RegisterHandlers(mux *http.ServeMux, queries *Queries, hub *Hub, authMw fun
 	mux.Handle("POST /api/rooms", authMw(http.HandlerFunc(h.handleCreateRoom)))
 	mux.Handle("GET /api/rooms/{id}/messages", authMw(http.HandlerFunc(h.handleGetMessages)))
 	mux.Handle("PATCH /api/rooms/{id}/messages/{content_id}", authMw(http.HandlerFunc(h.handleUpdateMessage)))
+	mux.Handle("DELETE /api/rooms/{id}/messages/{content_id}", authMw(http.HandlerFunc(h.handleDeleteMessage)))
 }
 
 func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +154,7 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg, err := h.queries.UpdateMessage(r.Context(), UpdateMessageParams{
-		Content: req.Content,
+		Content: pgtype.Text{String: req.Content, Valid: true},
 		ID:      contentID,
 		UserID:  userID,
 	})
@@ -178,12 +180,61 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 		ID:        msg.ID,
 		RoomID:    roomID,
 		UserID:    userID,
-		Content:   msg.Content,
+		Content:   msg.Content.String,
 		UpdatedAt: msg.UpdatedAt.Time,
 	}
 
 	writeJSON(w, http.StatusOK, msg)
 }
+
+func (h *Handler) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
+	roomID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
+		return
+	}
+
+	contentID, err := uuid.Parse(r.PathValue("content_id"))
+	if err != nil {
+		http.Error(w, "ID de conteúdo inválido", http.StatusBadRequest)
+		return
+	}
+
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Não autorizado", http.StatusUnauthorized)
+		return
+	}
+
+	userID := claims.UserID
+
+	msg, err := h.queries.DeleteMessage(r.Context(), DeleteMessageParams{
+		ID:     contentID,
+		UserID: userID,
+	})
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "Mensagem não encontrada ou você não tem permissão para deletá-la", http.StatusForbidden)
+			return
+		}
+
+		log.Printf("erro ao deletar mensagem: %v", err)
+		http.Error(w, "Erro interno ao deletar mensagem", http.StatusInternalServerError)
+		return
+	}
+
+	h.hub.broadcast <- OutboundEvent{
+		Type:   EventMessage,
+		Action: MessageDeleted,
+		ID:     msg.ID,
+		RoomID: roomID,
+		UserID: userID,
+	}
+
+	writeJSON(w, http.StatusOK, msg)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
