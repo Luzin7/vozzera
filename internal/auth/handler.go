@@ -2,12 +2,14 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 )
@@ -40,6 +42,7 @@ func RegisterHandlers(mux *http.ServeMux, queries *Queries, inviteCode string, s
 	mux.HandleFunc("POST /api/register", h.handleRegister)
 	mux.HandleFunc("POST /api/login", h.handleLogin)
 	mux.Handle("POST /api/logout", authMw(http.HandlerFunc(h.handleLogout)))
+	mux.Handle("GET /api/me", authMw(http.HandlerFunc(h.handleMe)))
 }
 
 func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +143,30 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
 		"message":  "Login realizado com sucesso",
+		"id":       user.ID.String(),
+		"username": user.Username,
+	})
+}
+
+func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Não autenticado", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := h.queries.GetUserByID(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Usuário não encontrado", http.StatusUnauthorized)
+			return
+		}
+		log.Printf("erro ao buscar usuário: %v", err)
+		http.Error(w, "Erro ao buscar usuário", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{
 		"id":       user.ID.String(),
 		"username": user.Username,
 	})

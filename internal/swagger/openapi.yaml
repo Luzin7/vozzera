@@ -106,6 +106,24 @@ paths:
           description: Sessão revogada
         "401":
           description: Não autenticado
+  /api/me:
+    get:
+      tags: [auth]
+      summary: Usuário autenticado
+      operationId: me
+      description: Devolve os dados atuais do usuário da sessão, consultando o banco (username fresco). Requer autenticação.
+      responses:
+        "200":
+          description: Dados do usuário
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  username: { type: string }
+        "401":
+          description: Não autenticado ou sessão inválida
   /api/rooms:
     get:
       tags: [rooms]
