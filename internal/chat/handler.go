@@ -60,6 +60,8 @@ func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
 	var req CreateRoomRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Payload inválido", http.StatusBadRequest)
@@ -68,6 +70,10 @@ func (h *Handler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name == "" {
 		http.Error(w, "Nome é obrigatório", http.StatusBadRequest)
+		return
+	}
+	if len(req.Name) > 100 {
+		http.Error(w, "Nome deve ter no máximo 100 caracteres", http.StatusBadRequest)
 		return
 	}
 	if req.Type != "text" && req.Type != "voice" {
@@ -122,6 +128,8 @@ func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
 	roomID, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
@@ -150,6 +158,10 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 
 	if req.Content == "" {
 		http.Error(w, "O conteúdo não pode ser vazio", http.StatusBadRequest)
+		return
+	}
+	if len(req.Content) > 4000 {
+		http.Error(w, "O conteúdo deve ter no máximo 4000 caracteres", http.StatusBadRequest)
 		return
 	}
 

@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,4 +39,12 @@ type OutboundEvent struct {
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	Error     string    `json:"error,omitempty"`
+}
+
+func jsonMessage(v OutboundEvent) []byte {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return payload
 }
