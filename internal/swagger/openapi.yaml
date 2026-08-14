@@ -10,7 +10,7 @@ security:
   - cookieAuth: []
 tags:
   - name: auth
-    description: Cadastro e login
+    description: Cadastro, login e logout
   - name: rooms
     description: Salas de texto
   - name: messages
@@ -64,7 +64,7 @@ paths:
       tags: [auth]
       summary: Entrar
       operationId: login
-      description: Define o cookie HttpOnly `auth_token`. As rotas protegidas usam esse cookie.
+      description: Define o cookie HttpOnly `auth_token` com o id opaco da sessão. As rotas protegidas usam esse cookie. A sessão expira após `SESSION_TTL` sem atividade (expiração deslizante) e pode ser revogada em `/api/logout`.
       security: []
       requestBody:
         required: true
@@ -95,6 +95,17 @@ paths:
           description: Payload inválido
         "401":
           description: Credenciais inválidas
+  /api/logout:
+    post:
+      tags: [auth]
+      summary: Sair
+      operationId: logout
+      description: Revoga a sessão atual, apaga o cookie `auth_token` e derruba as conexões WebSocket da sessão. Requer autenticação.
+      responses:
+        "204":
+          description: Sessão revogada
+        "401":
+          description: Não autenticado
   /api/rooms:
     get:
       tags: [rooms]
@@ -315,7 +326,7 @@ components:
       type: apiKey
       in: cookie
       name: auth_token
-      description: Cookie HttpOnly definido em POST /api/login
+      description: Cookie HttpOnly com o id opaco da sessão, definido em POST /api/login. Sessão revogável via POST /api/logout.
   schemas:
     Room:
       type: object

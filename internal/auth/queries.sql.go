@@ -7,10 +7,20 @@ package auth
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const cleanupExpiredSessions = `-- name: CleanupExpiredSessions :exec
+DELETE FROM sessions WHERE expires_at < NOW()
+`
+
+func (q *Queries) CleanupExpiredSessions(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, cleanupExpiredSessions)
+	return err
+}
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, password_hash)
@@ -36,6 +46,50 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
+const deleteSessionByID = `-- name: DeleteSessionByID :exec
+DELETE FROM sessions WHERE id = $1
+`
+
+func (q *Queries) DeleteSessionByID(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteSessionByID, id)
+	return err
+}
+
+const deleteSessionsByUser = `-- name: DeleteSessionsByUser :exec
+DELETE FROM sessions WHERE user_id = $1
+`
+
+func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteSessionsByUser, userID)
+	return err
+}
+
+const getSessionByID = `-- name: GetSessionByID :one
+SELECT s.id AS id, s.expires_at AS expires_at, u.id AS user_id, u.username AS username
+FROM sessions s
+JOIN users u ON u.id = s.user_id
+WHERE s.id = $1
+`
+
+type GetSessionByIDRow struct {
+	ID        uuid.UUID `json:"id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	UserID    uuid.UUID `json:"user_id"`
+	Username  string    `json:"username"`
+}
+
+func (q *Queries) GetSessionByID(ctx context.Context, id uuid.UUID) (GetSessionByIDRow, error) {
+	row := q.db.QueryRow(ctx, getSessionByID, id)
+	var i GetSessionByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.ExpiresAt,
+		&i.UserID,
+		&i.Username,
+	)
+	return i, err
+}
+
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT id, username, password_hash, created_at
 FROM users
@@ -52,4 +106,43 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertSession = `-- name: InsertSession :one
+INSERT INTO sessions (user_id, expires_at)
+VALUES ($1, $2)
+RETURNING id, expires_at
+`
+
+type InsertSessionParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type InsertSessionRow struct {
+	ID        uuid.UUID `json:"id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (InsertSessionRow, error) {
+	row := q.db.QueryRow(ctx, insertSession, arg.UserID, arg.ExpiresAt)
+	var i InsertSessionRow
+	err := row.Scan(&i.ID, &i.ExpiresAt)
+	return i, err
+}
+
+const touchSession = `-- name: TouchSession :exec
+UPDATE sessions
+SET expires_at = $2
+WHERE id = $1 AND expires_at < $2
+`
+
+type TouchSessionParams struct {
+	ID        uuid.UUID `json:"id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
+	_, err := q.db.Exec(ctx, touchSession, arg.ID, arg.ExpiresAt)
+	return err
 }

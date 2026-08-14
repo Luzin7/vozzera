@@ -17,8 +17,8 @@ Cada domínio é **auto-contido**: handler, service, queries SQL e código gerad
 
 /internal
   /auth
-    handler.go             # Rotas POST /api/register e POST /api/login
-    service.go             # Geração/validação de JWT, hash bcrypt
+    handler.go             # Rotas POST /api/register, /api/login e POST /api/logout
+    service.go             # Hash bcrypt
     queries.sql            # Arquivo para o sqlc gerar o repositório deste domínio
     db.go                  # (Gerado pelo sqlc — NÃO editar)
     models.go              # (Gerado pelo sqlc — NÃO editar)
@@ -154,10 +154,10 @@ Para usar no código do domínio, basta chamar `auth.New(pool)` ou `chat.New(poo
 
 | Domínio    | Status       | Detalhes |
 |------------|-------------|----------|
-| **Auth**   | Funcional   | `handler.go`: register com invite code + login com JWT 30d via cookie HttpOnly. `service.go`: HashPassword, CheckPassword, GenerateToken, ParseToken. Queries: `CreateUser`, `GetUserByUsername`. |
+| **Auth**   | Funcional   | `handler.go`: register com invite code + login que cria sessão opaca (cookie HttpOnly, `SESSION_TTL` deslizante) + logout que revoga a sessão e derruba os WS da sessão. `service.go`: HashPassword, CheckPassword. Queries: `CreateUser`, `GetUserByUsername`, `InsertSession`, `GetSessionByID`, `TouchSession`, `DeleteSessionByID`, `DeleteSessionsByUser`, `CleanupExpiredSessions`. |
 | **Chat**   | Funcional   | `hub.go`: broker pattern com map + channels, singleton injetado pelo `main.go`. `client.go`: readPump/writePump com backpressure handling (ping/pong/deadlines). `handler.go`: ServeWs, `GET/POST /api/rooms`, `GET /api/rooms/{id}/messages`, `PATCH /api/rooms/{id}/messages/{content_id}` (edição com broadcast `message_edited`). Queries: `CreateMessage`, `GetMessagesByRoom`, `ListRooms`, `CreateRoom`, `UpdateMessage`. |
 | **Voice**  | Funcional   | `livekit.go`: `TokenIssuer` assina JWT do LiveKit via `protocol/auth`. `handler.go`: `POST /api/voice/token` (valida sala, exige `type=voice`, assina token) e `GET /api/voice/rooms`. Queries: `GetRoomByID`, `ListVoiceRooms`. |
-| **Shared** | Funcional   | `config.go`: `Load()` com godotenv. `db.go`: `Connect()` retorna `*pgxpool.Pool`. `httpx/`: `Auth()` põe user no context, `UserFromContext()`, `CORS()` (provisório — reflete qualquer origin, ver T2 do roadmap). |
+| **Shared** | Funcional   | `config.go`: `Load()` com godotenv (`SESSION_TTL`, `SESSION_TOUCH_WINDOW`). `db.go`: `Connect()` retorna `*pgxpool.Pool`. `httpx/`: `Auth()` valida sessão no DB e põe user no context, `UserFromContext()`, `CORS()` (provisório — reflete qualquer origin, ver T2 do roadmap). |
 | **Main**   | Funcional   | Carrega config → conecta pool → cria `auth/chat/voice` queries → cria `Hub` único e dispara `go hub.Run()` → registra rotas REST/WS com middleware de auth. O `Hub` é injetado em `ServeWs` e em `chat.RegisterHandlers` — mesma instância. |
 
 ### Dependências (`go.mod`)
@@ -166,7 +166,6 @@ Para usar no código do domínio, basta chamar `auth.New(pool)` ou `chat.New(poo
 |--------|-----|
 | `gorilla/websocket` | Upgrade HTTP → WS |
 | `jackc/pgx/v5` | Driver PostgreSQL + pool |
-| `golang-jwt/v5` | Geração e parsing de JWT |
 | `golang.org/x/crypto` | bcrypt |
 | `joho/godotenv` | .env loader |
 | `google/uuid` | UUIDs |

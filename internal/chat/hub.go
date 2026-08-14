@@ -19,6 +19,7 @@ type Hub struct {
 	join       chan roomJoin
 	register   chan *Client
 	unregister chan *Client
+	revoke     chan uuid.UUID
 	queries    *Queries
 }
 
@@ -28,10 +29,15 @@ func NewHub(queries *Queries) *Hub {
 		join:       make(chan roomJoin),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
+		revoke:     make(chan uuid.UUID),
 		clients:    make(map[*Client]bool),
 		rooms:      make(map[uuid.UUID]map[*Client]bool),
 		queries:    queries,
 	}
+}
+
+func (h *Hub) Revoke(sessionID uuid.UUID) {
+	h.revoke <- sessionID
 }
 
 func (h *Hub) RemoveClientFromRoom(c *Client) {
@@ -61,6 +67,12 @@ func (h *Hub) Run() {
 			h.clients[client] = true
 		case client := <-h.unregister:
 			h.RemoveClientFromRoom(client)
+		case sessionID := <-h.revoke:
+			for client := range h.clients {
+				if client.SessionID == sessionID {
+					h.RemoveClientFromRoom(client)
+				}
+			}
 		case j := <-h.join:
 			if h.rooms[j.roomID] == nil {
 				h.rooms[j.roomID] = make(map[*Client]bool)
