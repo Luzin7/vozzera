@@ -12,11 +12,12 @@ type ctxKey int
 const userKey ctxKey = 0
 
 type UserClaims struct {
-	UserID   uuid.UUID
-	Username string
+	UserID    uuid.UUID
+	Username  string
+	SessionID uuid.UUID
 }
 
-type TokenParser func(token string) (UserClaims, error)
+type TokenParser func(ctx context.Context, token string) (UserClaims, error)
 
 func Auth(parse TokenParser) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -27,7 +28,7 @@ func Auth(parse TokenParser) func(http.Handler) http.Handler {
 				return
 			}
 
-			claims, err := parse(cookie.Value)
+			claims, err := parse(r.Context(), cookie.Value)
 			if err != nil {
 				http.Error(w, "Token inválido", http.StatusUnauthorized)
 				return

@@ -20,12 +20,13 @@ const (
 )
 
 type Client struct {
-	hub      *Hub
-	conn     *websocket.Conn
-	send     chan []byte
-	UserID   uuid.UUID
-	Username string
-	Rooms    map[uuid.UUID]bool
+	hub       *Hub
+	conn      *websocket.Conn
+	send      chan []byte
+	UserID    uuid.UUID
+	Username  string
+	SessionID uuid.UUID
+	Rooms     map[uuid.UUID]bool
 }
 
 func (c *Client) readPump() {

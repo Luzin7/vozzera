@@ -255,7 +255,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID uuid.UUID, username string) {
+func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID uuid.UUID, username string, sessionID uuid.UUID) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("Erro no upgrade HTTP->WS:", err)
@@ -263,12 +263,13 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID uuid.UUID,
 	}
 
 	client := &Client{
-		hub:      hub,
-		conn:     conn,
-		send:     make(chan []byte, 256),
-		UserID:   userID,
-		Username: username,
-		Rooms:    make(map[uuid.UUID]bool),
+		hub:       hub,
+		conn:      conn,
+		send:      make(chan []byte, 256),
+		UserID:    userID,
+		Username:  username,
+		SessionID: sessionID,
+		Rooms:     make(map[uuid.UUID]bool),
 	}
 	client.hub.register <- client
 
