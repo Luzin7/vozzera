@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -14,6 +15,7 @@ type Config struct {
 	LiveKitURL       string
 	LiveKitAPIKey    string
 	LiveKitAPISecret string
+	CORSOrigins      []string
 }
 
 func Load() *Config {
@@ -32,5 +34,21 @@ func Load() *Config {
 		LiveKitURL:       os.Getenv("LIVEKIT_URL"),
 		LiveKitAPIKey:    os.Getenv("LIVEKIT_API_KEY"),
 		LiveKitAPISecret: os.Getenv("LIVEKIT_API_SECRET"),
+		CORSOrigins:      splitList(os.Getenv("CORS_ORIGINS")),
 	}
+}
+
+func splitList(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/auth"
 	"github.com/Luzin7/vozzera-backend/internal/chat"
@@ -42,6 +43,15 @@ func main() {
 
 	issuer := voice.NewTokenIssuer(cfg.LiveKitAPIKey, cfg.LiveKitAPISecret)
 
+	rateLimiter := httpx.NewRateLimiter(map[string]httpx.RateLimitRule{
+		"/api/login":       {Limit: 10, Window: time.Minute},
+		"/api/register":    {Limit: 5, Window: time.Minute},
+		"/api/voice/token": {Limit: 30, Window: time.Minute},
+		"/api/rooms":       {Limit: 120, Window: time.Minute},
+		"/api/rooms/":      {Limit: 120, Window: time.Minute},
+		"/api/voice/rooms": {Limit: 60, Window: time.Minute},
+	})
+
 	auth.RegisterHandlers(mux, authQueries, cfg.JWTSecret, cfg.InviteCode)
 	chat.RegisterHandlers(mux, chatQueries, hub, authMw)
 	voice.RegisterHandlers(mux, voiceQueries, issuer, cfg.LiveKitURL, authMw)
@@ -55,11 +65,11 @@ func main() {
 		chat.ServeWs(hub, w, r, user.UserID, user.Username)
 	})))
 
+	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
+
 	log.Printf("Servidor rodando na porta :%s", cfg.Port)
 
-	loggedMux := httpx.Logger(mux)
-
-	finalHandler := httpx.CORS(loggedMux)
+	finalHandler := httpx.Logger(handler)
 	if err := http.ListenAndServe(":"+cfg.Port, finalHandler); err != nil {
 		log.Fatal(err)
 	}

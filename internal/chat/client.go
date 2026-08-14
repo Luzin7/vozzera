@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,9 +12,10 @@ import (
 )
 
 const (
-	writeWait  = 10 * time.Second
-	pongWait   = 60 * time.Second
-	pingPeriod = (pongWait * 9) / 10
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingPeriod     = (pongWait * 9) / 10
+	maxMessageSize = 4096
 )
 
 type Client struct {
@@ -35,6 +37,7 @@ func (c *Client) readPump() {
 
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		c.conn.SetReadLimit(maxMessageSize)
 		return nil
 	})
 
@@ -59,11 +62,20 @@ func (c *Client) readPump() {
 			continue
 
 		case EventMessage:
+			content := strings.TrimSpace(in.Content)
+			if content == "" || len(content) > 4000 {
+				c.send <- jsonMessage(OutboundEvent{
+					Type:  EventError,
+					Error: "Mensagem deve ter entre 1 e 4000 caracteres",
+				})
+				continue
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			msgDB, err := c.hub.queries.CreateMessage(ctx, CreateMessageParams{
 				RoomID:  in.RoomID,
 				UserID:  c.UserID,
-				Content: in.Content,
+				Content: content,
 			})
 			cancel()
 
