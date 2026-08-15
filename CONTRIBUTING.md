@@ -7,7 +7,7 @@ Obrigado por querer contribuir. Antes de abrir PR, leia isto aqui — é curto.
 ```bash
 git clone <fork>
 cd vozzera
-cp .env.example .env           # preencha JWT_SECRET, INVITE_CODE e LiveKit
+cp .env.example .env           # preencha INVITE_CODE e LiveKit
 docker compose -f docker-compose.dev.yml up -d
 make migrate-up
 make run

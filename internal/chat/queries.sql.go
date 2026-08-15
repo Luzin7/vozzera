@@ -19,16 +19,16 @@ RETURNING id, room_id, user_id, content, created_at
 `
 
 type CreateMessageParams struct {
-	RoomID  uuid.UUID `json:"room_id"`
-	UserID  uuid.UUID `json:"user_id"`
-	Content string    `json:"content"`
+	RoomID  uuid.UUID   `json:"room_id"`
+	UserID  uuid.UUID   `json:"user_id"`
+	Content pgtype.Text `json:"content"`
 }
 
 type CreateMessageRow struct {
 	ID        uuid.UUID          `json:"id"`
 	RoomID    uuid.UUID          `json:"room_id"`
 	UserID    uuid.UUID          `json:"user_id"`
-	Content   string             `json:"content"`
+	Content   pgtype.Text        `json:"content"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -68,6 +68,39 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 	return i, err
 }
 
+const deleteMessage = `-- name: DeleteMessage :one
+UPDATE messages
+SET deleted_at = NOW(), content = NULL
+WHERE id = $1 AND user_id = $2
+RETURNING id, room_id, user_id, content, created_at
+`
+
+type DeleteMessageParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+type DeleteMessageRow struct {
+	ID        uuid.UUID          `json:"id"`
+	RoomID    uuid.UUID          `json:"room_id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	Content   pgtype.Text        `json:"content"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) DeleteMessage(ctx context.Context, arg DeleteMessageParams) (DeleteMessageRow, error) {
+	row := q.db.QueryRow(ctx, deleteMessage, arg.ID, arg.UserID)
+	var i DeleteMessageRow
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.UserID,
+		&i.Content,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getMessagesByRoom = `-- name: GetMessagesByRoom :many
 SELECT
     m.id,
@@ -77,7 +110,7 @@ SELECT
     u.username
 FROM messages m
 JOIN users u ON m.user_id = u.id
-WHERE m.room_id = $1
+WHERE m.room_id = $1 AND m.deleted_at IS NULL
 ORDER BY m.created_at DESC
 LIMIT $2
 `
@@ -89,7 +122,7 @@ type GetMessagesByRoomParams struct {
 
 type GetMessagesByRoomRow struct {
 	ID        uuid.UUID          `json:"id"`
-	Content   string             `json:"content"`
+	Content   pgtype.Text        `json:"content"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UserID    uuid.UUID          `json:"user_id"`
 	Username  string             `json:"username"`
@@ -155,20 +188,20 @@ func (q *Queries) ListRooms(ctx context.Context) ([]Room, error) {
 const updateMessage = `-- name: UpdateMessage :one
 UPDATE messages
 SET content = $1, updated_at = NOW()
-WHERE id = $2 AND user_id = $3
+WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL
 RETURNING id, room_id, content, updated_at
 `
 
 type UpdateMessageParams struct {
-	Content string    `json:"content"`
-	ID      uuid.UUID `json:"id"`
-	UserID  uuid.UUID `json:"user_id"`
+	Content pgtype.Text `json:"content"`
+	ID      uuid.UUID   `json:"id"`
+	UserID  uuid.UUID   `json:"user_id"`
 }
 
 type UpdateMessageRow struct {
 	ID        uuid.UUID          `json:"id"`
 	RoomID    uuid.UUID          `json:"room_id"`
-	Content   string             `json:"content"`
+	Content   pgtype.Text        `json:"content"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 

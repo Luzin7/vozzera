@@ -5,6 +5,8 @@
 package auth
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -13,9 +15,10 @@ type Message struct {
 	ID        uuid.UUID          `json:"id"`
 	RoomID    uuid.UUID          `json:"room_id"`
 	UserID    uuid.UUID          `json:"user_id"`
-	Content   string             `json:"content"`
+	Content   pgtype.Text        `json:"content"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type Room struct {
@@ -23,6 +26,13 @@ type Room struct {
 	Name      string             `json:"name"`
 	Type      string             `json:"type"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type Session struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type User struct {

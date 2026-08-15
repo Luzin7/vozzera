@@ -9,8 +9,10 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var upgrader = websocket.Upgrader{
@@ -39,6 +41,7 @@ func RegisterHandlers(mux *http.ServeMux, queries *Queries, hub *Hub, authMw fun
 	mux.Handle("POST /api/rooms", authMw(http.HandlerFunc(h.handleCreateRoom)))
 	mux.Handle("GET /api/rooms/{id}/messages", authMw(http.HandlerFunc(h.handleGetMessages)))
 	mux.Handle("PATCH /api/rooms/{id}/messages/{content_id}", authMw(http.HandlerFunc(h.handleUpdateMessage)))
+	mux.Handle("DELETE /api/rooms/{id}/messages/{content_id}", authMw(http.HandlerFunc(h.handleDeleteMessage)))
 }
 
 func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +60,8 @@ func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
 	var req CreateRoomRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Payload inválido", http.StatusBadRequest)
@@ -65,6 +70,10 @@ func (h *Handler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name == "" {
 		http.Error(w, "Nome é obrigatório", http.StatusBadRequest)
+		return
+	}
+	if len(req.Name) > 100 {
+		http.Error(w, "Nome deve ter no máximo 100 caracteres", http.StatusBadRequest)
 		return
 	}
 	if req.Type != "text" && req.Type != "voice" {
@@ -119,6 +128,8 @@ func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
 	roomID, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
@@ -131,11 +142,13 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := r.Context().Value("userID").(uuid.UUID)
+	claims, ok := httpx.UserFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Não autorizado", http.StatusUnauthorized)
 		return
 	}
+
+	userID := claims.UserID
 
 	var req UpdateMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -147,16 +160,24 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "O conteúdo não pode ser vazio", http.StatusBadRequest)
 		return
 	}
+	if len(req.Content) > 4000 {
+		http.Error(w, "O conteúdo deve ter no máximo 4000 caracteres", http.StatusBadRequest)
+		return
+	}
 
 	msg, err := h.queries.UpdateMessage(r.Context(), UpdateMessageParams{
-		Content: req.Content,
+		Content: pgtype.Text{String: req.Content, Valid: true},
 		ID:      contentID,
 		UserID:  userID,
 	})
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "Mensagem não encontrada ou você não tem permissão para editá-la", http.StatusForbidden)
+			http.Error(
+				w,
+				"Mensagem não encontrada ou você não tem permissão para editá-la",
+				http.StatusForbidden,
+			)
 			return
 		}
 
@@ -166,12 +187,61 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.hub.broadcast <- OutboundEvent{
-		Type:      "message_edited",
+		Type:      EventMessage,
+		Action:    MessageUpdated,
 		ID:        msg.ID,
 		RoomID:    roomID,
 		UserID:    userID,
-		Content:   msg.Content,
+		Content:   msg.Content.String,
 		UpdatedAt: msg.UpdatedAt.Time,
+	}
+
+	writeJSON(w, http.StatusOK, msg)
+}
+
+func (h *Handler) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
+	roomID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
+		return
+	}
+
+	contentID, err := uuid.Parse(r.PathValue("content_id"))
+	if err != nil {
+		http.Error(w, "ID de conteúdo inválido", http.StatusBadRequest)
+		return
+	}
+
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Não autorizado", http.StatusUnauthorized)
+		return
+	}
+
+	userID := claims.UserID
+
+	msg, err := h.queries.DeleteMessage(r.Context(), DeleteMessageParams{
+		ID:     contentID,
+		UserID: userID,
+	})
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "Mensagem não encontrada ou você não tem permissão para deletá-la", http.StatusForbidden)
+			return
+		}
+
+		log.Printf("erro ao deletar mensagem: %v", err)
+		http.Error(w, "Erro interno ao deletar mensagem", http.StatusInternalServerError)
+		return
+	}
+
+	h.hub.broadcast <- OutboundEvent{
+		Type:   EventMessage,
+		Action: MessageDeleted,
+		ID:     msg.ID,
+		RoomID: roomID,
+		UserID: userID,
 	}
 
 	writeJSON(w, http.StatusOK, msg)
@@ -185,7 +255,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID uuid.UUID, username string) {
+func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID uuid.UUID, username string, sessionID uuid.UUID) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("Erro no upgrade HTTP->WS:", err)
@@ -193,12 +263,13 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID uuid.UUID,
 	}
 
 	client := &Client{
-		hub:      hub,
-		conn:     conn,
-		send:     make(chan []byte, 256),
-		UserID:   userID,
-		Username: username,
-		Rooms:    make(map[uuid.UUID]bool),
+		hub:       hub,
+		conn:      conn,
+		send:      make(chan []byte, 256),
+		UserID:    userID,
+		Username:  username,
+		SessionID: sessionID,
+		Rooms:     make(map[uuid.UUID]bool),
 	}
 	client.hub.register <- client
 

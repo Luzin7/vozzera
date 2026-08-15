@@ -12,7 +12,7 @@ SELECT
     u.username
 FROM messages m
 JOIN users u ON m.user_id = u.id
-WHERE m.room_id = $1
+WHERE m.room_id = $1 AND m.deleted_at IS NULL
 ORDER BY m.created_at DESC
 LIMIT $2;
 
@@ -29,5 +29,11 @@ RETURNING id, name, type, created_at;
 -- name: UpdateMessage :one
 UPDATE messages
 SET content = $1, updated_at = NOW()
-WHERE id = $2 AND user_id = $3
+WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL
 RETURNING id, room_id, content, updated_at;
+
+-- name: DeleteMessage :one
+UPDATE messages
+SET deleted_at = NOW(), content = NULL
+WHERE id = $1 AND user_id = $2
+RETURNING id, room_id, user_id, content, created_at;

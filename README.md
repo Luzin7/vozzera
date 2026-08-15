@@ -5,13 +5,13 @@
 ![Postgres](https://img.shields.io/badge/Postgres-16-336791?logo=postgresql)
 ![Status](https://img.shields.io/badge/status-early--stage-orange)
 
-Backend de chat em **texto** e **voz** (real-time com WebSocket e LiveKit Cloud). Auth por JWT em cookie HttpOnly, arquitetura em Vertical Slicing, sem framework HTTP — stdlib do Go + sqlc + pgx.
+Backend de chat em **texto** e **voz** (real-time com WebSocket e LiveKit Cloud). Sessões opacas em cookie HttpOnly com revogação, arquitetura em Vertical Slicing, sem framework HTTP — stdlib do Go + sqlc + pgx.
 
 > Projeto em estágio inicial: as funcionalidades abaixo funcionam ponta a ponta, mas há pontos de robustez pendentes (ver [Roadmap](#roadmap)).
 
 ## Funcionalidades
 
-- **Autenticação** — registro por invite code + login com JWT guardado em cookie `HttpOnly; SameSite=None; Secure`.
+- **Autenticação** — registro por invite code + login com sessão opaca em cookie `HttpOnly; SameSite=None; Secure`, expiração deslizante e revogação via logout.
 - **Salas** — texto e voz, listagem e criação via REST.
 - **Mensagens de texto** — envio em tempo real via WebSocket, histórico por sala, edição via `PATCH`.
 - **Voz** — tokens LiveKit assinados pelo backend; mídia vai direto do browser pro LiveKit Cloud.
@@ -26,7 +26,6 @@ Backend de chat em **texto** e **voz** (real-time com WebSocket e LiveKit Cloud)
 | Codegen SQL   | `sqlc` (queries `.sql` → Go fortemente tipado, arquivos gerados) |
 | Migrations    | `goose` (via `go tool`)                                          |
 | Voz           | `livekit/protocol/auth` (apenas assinatura de token)             |
-| JWT           | `golang-jwt/v5`                                                  |
 | Hash          | `golang.org/x/crypto` (bcrypt)                                   |
 
 ## Pré-requisitos
@@ -43,7 +42,7 @@ docker compose -f docker-compose.dev.yml up -d
 
 # 2. Configurar env
 cp .env.example .env
-# preencha JWT_SECRET, INVITE_CODE e as credenciais do LiveKit
+# preencha INVITE_CODE e as credenciais do LiveKit
 
 # 3. Aplicar migrations e subir o servidor
 make migrate-up

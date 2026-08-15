@@ -27,7 +27,7 @@ Closes #
 ## Checklist antes de pedir review
 
 - [ ] `make tidy` rodou sem mudanças que devem entrar no commit
-- [ ] Se mexi em `queries.sql`, rodei `make generate` e **não** commitei os arquivos gerados (`db.go`, `models.go`, `queries.sql.go`)
+- [ ] Se mexi em `queries.sql`, rodei `make generate` e **commitei** os arquivos gerados (`db.go`, `models.go`, `queries.sql.go`) junto — o build do Dockerfile compila o que está no repo
 - [ ] Se mexi em schema, criei migration nova com `make migrate-create name=...` e ela tem `-- +goose Up` e `-- +goose Down`
 - [ ] `go build ./...` passa
 - [ ] `go vet ./...` não reclama
