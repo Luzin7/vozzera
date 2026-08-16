@@ -11,10 +11,21 @@ type ctxKey int
 
 const userKey ctxKey = 0
 
+const (
+	RoleUser  = "user"
+	RoleMod   = "mod"
+	RoleAdmin = "admin"
+)
+
 type UserClaims struct {
 	UserID    uuid.UUID
 	Username  string
+	Role      string
 	SessionID uuid.UUID
+}
+
+func (c UserClaims) CanModerate() bool {
+	return c.Role == RoleAdmin || c.Role == RoleMod
 }
 
 type TokenParser func(ctx context.Context, token string) (UserClaims, error)

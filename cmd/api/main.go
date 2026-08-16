@@ -63,6 +63,7 @@ func main() {
 		return httpx.UserClaims{
 			UserID:    session.UserID,
 			Username:  session.Username,
+			Role:      session.Role,
 			SessionID: sid,
 		}, nil
 	})

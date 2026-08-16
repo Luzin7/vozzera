@@ -30,6 +30,10 @@ type CreateRoomRequest struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
 }
+
+type UpdateRoomRequest struct {
+	Name string `json:"name"`
+}
 type UpdateMessageRequest struct {
 	Content string `json:"content"`
 }
@@ -39,6 +43,8 @@ func RegisterHandlers(mux *http.ServeMux, queries *Queries, hub *Hub, authMw fun
 
 	mux.Handle("GET /api/rooms", authMw(http.HandlerFunc(h.handleListRooms)))
 	mux.Handle("POST /api/rooms", authMw(http.HandlerFunc(h.handleCreateRoom)))
+	mux.Handle("PATCH /api/rooms/{id}", authMw(http.HandlerFunc(h.handleUpdateRoom)))
+	mux.Handle("DELETE /api/rooms/{id}", authMw(http.HandlerFunc(h.handleDeleteRoom)))
 	mux.Handle("GET /api/rooms/{id}/messages", authMw(http.HandlerFunc(h.handleGetMessages)))
 	mux.Handle("PATCH /api/rooms/{id}/messages/{content_id}", authMw(http.HandlerFunc(h.handleUpdateMessage)))
 	mux.Handle("DELETE /api/rooms/{id}/messages/{content_id}", authMw(http.HandlerFunc(h.handleDeleteMessage)))
@@ -60,6 +66,12 @@ func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok || !claims.CanModerate() {
+		http.Error(w, "Não autorizado", http.StatusUnauthorized)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 
 	var req CreateRoomRequest
@@ -91,7 +103,99 @@ func (h *Handler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.hub.broadcast <- OutboundEvent{
+		Type:     EventRoom,
+		Action:   RoomCreated,
+		ID:       room.ID,
+		RoomName: room.Name,
+		RoomType: room.Type,
+	}
+
 	writeJSON(w, http.StatusCreated, room)
+}
+
+func (h *Handler) handleUpdateRoom(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok || !claims.CanModerate() {
+		http.Error(w, "Não autorizado", http.StatusUnauthorized)
+		return
+	}
+
+	roomID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
+	var req UpdateRoomRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" {
+		http.Error(w, "Nome é obrigatório", http.StatusBadRequest)
+		return
+	}
+	if len(req.Name) > 100 {
+		http.Error(w, "Nome deve ter no máximo 100 caracteres", http.StatusBadRequest)
+		return
+	}
+
+	room, err := h.queries.UpdateRoom(r.Context(), UpdateRoomParams{
+		ID:   roomID,
+		Name: req.Name,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "Sala não encontrada", http.StatusNotFound)
+			return
+		}
+		log.Printf("erro ao atualizar sala: %v", err)
+		http.Error(w, "Erro ao atualizar sala", http.StatusInternalServerError)
+		return
+	}
+
+	h.hub.broadcast <- OutboundEvent{
+		Type:     EventRoom,
+		Action:   RoomUpdated,
+		ID:       room.ID,
+		RoomName: room.Name,
+		RoomType: room.Type,
+	}
+
+	writeJSON(w, http.StatusOK, room)
+}
+
+func (h *Handler) handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok || !claims.CanModerate() {
+		http.Error(w, "Não autorizado", http.StatusUnauthorized)
+		return
+	}
+
+	roomID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
+		return
+	}
+
+	_, err = h.queries.DeleteRoom(r.Context(), roomID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "Sala não encontrada", http.StatusNotFound)
+			return
+		}
+		log.Printf("erro ao deletar sala: %v", err)
+		http.Error(w, "Erro ao deletar sala", http.StatusInternalServerError)
+		return
+	}
+
+	h.hub.CloseRoom(roomID)
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {
@@ -223,6 +327,7 @@ func (h *Handler) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	msg, err := h.queries.DeleteMessage(r.Context(), DeleteMessageParams{
 		ID:     contentID,
 		UserID: userID,
+		IsMod:  claims.CanModerate(),
 	})
 
 	if err != nil {

@@ -169,6 +169,7 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"id":       user.ID.String(),
 		"username": user.Username,
+		"role":     user.Role,
 	})
 }
 

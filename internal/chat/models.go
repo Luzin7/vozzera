@@ -26,6 +26,7 @@ type Room struct {
 	Name      string             `json:"name"`
 	Type      string             `json:"type"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Session struct {
@@ -40,4 +41,5 @@ type User struct {
 	Username     string             `json:"username"`
 	PasswordHash string             `json:"password_hash"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Role         string             `json:"role"`
 }
