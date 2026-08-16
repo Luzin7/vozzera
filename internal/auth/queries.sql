@@ -9,7 +9,7 @@ FROM users
 WHERE username = $1 LIMIT 1;
 
 -- name: GetUserByID :one
-SELECT id, username, password_hash, created_at
+SELECT id, username, password_hash, created_at, role
 FROM users
 WHERE id = $1 LIMIT 1;
 
@@ -19,7 +19,7 @@ VALUES ($1, $2)
 RETURNING id, expires_at;
 
 -- name: GetSessionByID :one
-SELECT s.id AS id, s.expires_at AS expires_at, u.id AS user_id, u.username AS username
+SELECT s.id AS id, s.expires_at AS expires_at, u.id AS user_id, u.username AS username, u.role AS role
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 WHERE s.id = $1;

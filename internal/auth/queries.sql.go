@@ -65,7 +65,7 @@ func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) er
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT s.id AS id, s.expires_at AS expires_at, u.id AS user_id, u.username AS username
+SELECT s.id AS id, s.expires_at AS expires_at, u.id AS user_id, u.username AS username, u.role AS role
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 WHERE s.id = $1
@@ -76,6 +76,7 @@ type GetSessionByIDRow struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	UserID    uuid.UUID `json:"user_id"`
 	Username  string    `json:"username"`
+	Role      string    `json:"role"`
 }
 
 func (q *Queries) GetSessionByID(ctx context.Context, id uuid.UUID) (GetSessionByIDRow, error) {
@@ -86,12 +87,13 @@ func (q *Queries) GetSessionByID(ctx context.Context, id uuid.UUID) (GetSessionB
 		&i.ExpiresAt,
 		&i.UserID,
 		&i.Username,
+		&i.Role,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, password_hash, created_at
+SELECT id, username, password_hash, created_at, role
 FROM users
 WHERE id = $1 LIMIT 1
 `
@@ -104,6 +106,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.Username,
 		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.Role,
 	)
 	return i, err
 }
@@ -114,9 +117,16 @@ FROM users
 WHERE username = $1 LIMIT 1
 `
 
-func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
+type GetUserByUsernameRow struct {
+	ID           uuid.UUID          `json:"id"`
+	Username     string             `json:"username"`
+	PasswordHash string             `json:"password_hash"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetUserByUsername(ctx context.Context, username string) (GetUserByUsernameRow, error) {
 	row := q.db.QueryRow(ctx, getUserByUsername, username)
-	var i User
+	var i GetUserByUsernameRow
 	err := row.Scan(
 		&i.ID,
 		&i.Username,
