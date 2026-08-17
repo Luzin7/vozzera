@@ -24,11 +24,12 @@ func main() {
 
 	var mailer auth.MailSender
 	m, err := smtp.NewSmtpMailer(smtp.Config{
-		Host:     cfg.SMTPConfig.Host,
-		Port:     cfg.SMTPConfig.Port,
-		User:     cfg.SMTPConfig.User,
-		Password: cfg.SMTPConfig.Password,
-		From:     cfg.SMTPConfig.From,
+		Host:        cfg.SMTPConfig.Host,
+		Port:        cfg.SMTPConfig.Port,
+		User:        cfg.SMTPConfig.User,
+		Password:    cfg.SMTPConfig.Password,
+		FromAddress: cfg.SMTPConfig.FromAddress,
+		FromName:    cfg.SMTPConfig.FromName,
 	})
 	if err != nil {
 		log.Printf("Envio de email desabilitado: %v", err)

@@ -6,11 +6,12 @@ import (
 )
 
 type Config struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	From     string
+	Host         string
+	Port         int
+	User         string
+	Password     string
+	FromAddress  string
+	FromName     string
 }
 
 type SmtpMailer struct {
@@ -18,7 +19,7 @@ type SmtpMailer struct {
 }
 
 func NewSmtpMailer(cfg Config) (*SmtpMailer, error) {
-	if cfg.Host == "" || cfg.Port <= 0 || cfg.User == "" || cfg.Password == "" || cfg.From == "" {
+	if cfg.Host == "" || cfg.Port <= 0 || cfg.User == "" || cfg.Password == "" || cfg.FromAddress == "" {
 		return nil, ErrInvalidConfig
 	}
 	return &SmtpMailer{cfg: cfg}, nil
@@ -26,14 +27,18 @@ func NewSmtpMailer(cfg Config) (*SmtpMailer, error) {
 
 func (m *SmtpMailer) Send(to, subject, html string) error {
 	auth := netsmtp.PlainAuth("", m.cfg.User, m.cfg.Password, m.cfg.Host)
+	from := m.cfg.FromAddress
+	if m.cfg.FromName != "" {
+		from = fmt.Sprintf("%s <%s>", m.cfg.FromName, m.cfg.FromAddress)
+	}
 	msg := fmt.Sprintf(
 		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
-		m.cfg.From, to, subject, html,
+		from, to, subject, html,
 	)
 	return netsmtp.SendMail(
 		fmt.Sprintf("%s:%d", m.cfg.Host, m.cfg.Port),
 		auth,
-		m.cfg.From,
+		m.cfg.FromAddress,
 		[]string{to},
 		[]byte(msg),
 	)
