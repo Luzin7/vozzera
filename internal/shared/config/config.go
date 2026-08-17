@@ -10,11 +10,12 @@ import (
 )
 
 type SMTPConfig struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	From     string
+	Host        string
+	Port        int
+	User        string
+	Password    string
+	FromAddress string
+	FromName    string
 }
 
 type Config struct {
@@ -53,11 +54,12 @@ func Load() *Config {
 		PasswordResetTTL:   durationEnv("PASSWORD_RESET_TTL", 30*time.Minute),
 		AppURL:             os.Getenv("APP_URL"),
 		SMTPConfig: SMTPConfig{
-			Host:     os.Getenv("SMTP_HOST"),
-			Port:     intEnv("SMTP_PORT", 587),
-			User:     os.Getenv("SMTP_USER"),
-			Password: os.Getenv("SMTP_PASS"),
-			From:     os.Getenv("SMTP_FROM"),
+			Host:        os.Getenv("SMTP_HOST"),
+			Port:        intEnv("SMTP_PORT", 587),
+			User:        os.Getenv("SMTP_USER"),
+			Password:    os.Getenv("SMTP_PASS"),
+			FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
+			FromName:    os.Getenv("MAIL_FROM_NAME"),
 		},
 	}
 }
