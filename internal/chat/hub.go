@@ -21,10 +21,9 @@ type Hub struct {
 	unregister chan *Client
 	revoke     chan uuid.UUID
 	closeRoom  chan uuid.UUID
-	queries    *Queries
 }
 
-func NewHub(queries *Queries) *Hub {
+func NewHub() *Hub {
 	return &Hub{
 		broadcast:  make(chan OutboundEvent),
 		join:       make(chan roomJoin),
@@ -34,12 +33,15 @@ func NewHub(queries *Queries) *Hub {
 		closeRoom:  make(chan uuid.UUID),
 		clients:    make(map[*Client]bool),
 		rooms:      make(map[uuid.UUID]map[*Client]bool),
-		queries:    queries,
 	}
 }
 
 func (h *Hub) Revoke(sessionID uuid.UUID) {
 	h.revoke <- sessionID
+}
+
+func (h *Hub) Broadcast(event OutboundEvent) {
+	h.broadcast <- event
 }
 
 func (h *Hub) CloseRoom(roomID uuid.UUID) {

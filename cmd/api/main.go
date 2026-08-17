@@ -32,8 +32,9 @@ func main() {
 	chatQueries := chat.New(pool)
 	voiceQueries := voice.New(pool)
 
-	hub := chat.NewHub(chatQueries)
+	hub := chat.NewHub()
 	go hub.Run()
+	sender := chat.NewSendMessageService(chatQueries, hub)
 	go cleanupExpiredSessions(authQueries)
 
 	mux := http.NewServeMux()
@@ -80,9 +81,24 @@ func main() {
 		"/api/voice/rooms": {Limit: 60, Window: time.Minute},
 	})
 
-	auth.RegisterHandlers(mux, authQueries, cfg.InviteCode, cfg.SessionTTL, hub.Revoke, authMw)
-	chat.RegisterHandlers(mux, chatQueries, hub, authMw)
-	voice.RegisterHandlers(mux, voiceQueries, issuer, cfg.LiveKitURL, authMw)
+	auth.RegisterHandlers(mux, auth.AuthDeps{
+		Repo:       authQueries,
+		InviteCode: cfg.InviteCode,
+		SessionTTL: cfg.SessionTTL,
+		Revoker:    hub,
+		AuthMW:     authMw,
+	})
+	chat.RegisterHandlers(mux, chat.ChatDeps{
+		Repo:   chatQueries,
+		Hub:    hub,
+		AuthMW: authMw,
+	})
+	voice.RegisterHandlers(mux, voice.VoiceDeps{
+		Repo:       voiceQueries,
+		Issuer:     issuer,
+		LiveKitURL: cfg.LiveKitURL,
+		AuthMW:     authMw,
+	})
 	swagger.RegisterHandlers(mux)
 
 	mux.Handle("GET /ws", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +107,7 @@ func main() {
 			http.Error(w, "Não autenticado", http.StatusUnauthorized)
 			return
 		}
-		chat.ServeWs(hub, w, r, user.UserID, user.Username, user.SessionID)
+		chat.ServeWs(hub, sender, w, r, user.UserID, user.Username, user.SessionID)
 	})))
 
 	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))

@@ -2,11 +2,20 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
+
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	From     string
+}
 
 type Config struct {
 	DatabaseURL        string
@@ -18,6 +27,7 @@ type Config struct {
 	CORSOrigins        []string
 	SessionTTL         time.Duration
 	SessionTouchWindow time.Duration
+	SMTPConfig         SMTPConfig
 }
 
 func Load() *Config {
@@ -38,6 +48,13 @@ func Load() *Config {
 		CORSOrigins:        splitList(os.Getenv("CORS_ORIGINS")),
 		SessionTTL:         durationEnv("SESSION_TTL", 7*24*time.Hour),
 		SessionTouchWindow: durationEnv("SESSION_TOUCH_WINDOW", 24*time.Hour),
+		SMTPConfig: SMTPConfig{
+			Host:     os.Getenv("SMTP_HOST"),
+			Port:     intEnv("SMTP_PORT", 587),
+			User:     os.Getenv("SMTP_USER"),
+			Password: os.Getenv("SMTP_PASS"),
+			From:     os.Getenv("SMTP_FROM"),
+		},
 	}
 }
 
@@ -51,6 +68,18 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func intEnv(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 func splitList(raw string) []string {
