@@ -17,8 +17,11 @@ type SmtpMailer struct {
 	cfg Config
 }
 
-func NewSmtpMailer(cfg Config) *SmtpMailer {
-	return &SmtpMailer{cfg: cfg}
+func NewSmtpMailer(cfg Config) (*SmtpMailer, error) {
+	if cfg.Host == "" || cfg.Port <= 0 || cfg.User == "" || cfg.Password == "" || cfg.From == "" {
+		return nil, ErrInvalidConfig
+	}
+	return &SmtpMailer{cfg: cfg}, nil
 }
 
 func (m *SmtpMailer) Send(to, subject, html string) error {

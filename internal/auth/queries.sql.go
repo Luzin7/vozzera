@@ -13,6 +13,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cleanupExpiredPasswordResetTokens = `-- name: CleanupExpiredPasswordResetTokens :exec
+DELETE FROM password_reset_tokens WHERE expires_at < NOW()
+`
+
+func (q *Queries) CleanupExpiredPasswordResetTokens(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, cleanupExpiredPasswordResetTokens)
+	return err
+}
+
 const cleanupExpiredSessions = `-- name: CleanupExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at < NOW()
 `
@@ -23,13 +32,14 @@ func (q *Queries) CleanupExpiredSessions(ctx context.Context) error {
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (username, password_hash)
-VALUES ($1, $2)
+INSERT INTO users (username, email, password_hash)
+VALUES ($1, $2, $3)
 RETURNING id, username, created_at
 `
 
 type CreateUserParams struct {
 	Username     string `json:"username"`
+	Email        string `json:"email"`
 	PasswordHash string `json:"password_hash"`
 }
 
@@ -40,10 +50,19 @@ type CreateUserRow struct {
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
-	row := q.db.QueryRow(ctx, createUser, arg.Username, arg.PasswordHash)
+	row := q.db.QueryRow(ctx, createUser, arg.Username, arg.Email, arg.PasswordHash)
 	var i CreateUserRow
 	err := row.Scan(&i.ID, &i.Username, &i.CreatedAt)
 	return i, err
+}
+
+const deletePasswordResetToken = `-- name: DeletePasswordResetToken :exec
+DELETE FROM password_reset_tokens WHERE id = $1
+`
+
+func (q *Queries) DeletePasswordResetToken(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deletePasswordResetToken, id)
+	return err
 }
 
 const deleteSessionByID = `-- name: DeleteSessionByID :exec
@@ -62,6 +81,26 @@ DELETE FROM sessions WHERE user_id = $1
 func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deleteSessionsByUser, userID)
 	return err
+}
+
+const getPasswordResetTokenByHash = `-- name: GetPasswordResetTokenByHash :one
+SELECT id, user_id, expires_at
+FROM password_reset_tokens
+WHERE token_hash = $1 AND expires_at > NOW()
+LIMIT 1
+`
+
+type GetPasswordResetTokenByHashRow struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (q *Queries) GetPasswordResetTokenByHash(ctx context.Context, tokenHash string) (GetPasswordResetTokenByHashRow, error) {
+	row := q.db.QueryRow(ctx, getPasswordResetTokenByHash, tokenHash)
+	var i GetPasswordResetTokenByHashRow
+	err := row.Scan(&i.ID, &i.UserID, &i.ExpiresAt)
+	return i, err
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
@@ -92,8 +131,27 @@ func (q *Queries) GetSessionByID(ctx context.Context, id uuid.UUID) (GetSessionB
 	return i, err
 }
 
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id, username, email
+FROM users
+WHERE email = $1 LIMIT 1
+`
+
+type GetUserByEmailRow struct {
+	ID       uuid.UUID `json:"id"`
+	Username string    `json:"username"`
+	Email    string    `json:"email"`
+}
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error) {
+	row := q.db.QueryRow(ctx, getUserByEmail, email)
+	var i GetUserByEmailRow
+	err := row.Scan(&i.ID, &i.Username, &i.Email)
+	return i, err
+}
+
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, password_hash, created_at, role
+SELECT id, username, password_hash, created_at, role, email
 FROM users
 WHERE id = $1 LIMIT 1
 `
@@ -107,12 +165,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.PasswordHash,
 		&i.CreatedAt,
 		&i.Role,
+		&i.Email,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, password_hash, created_at
+SELECT id, username, password_hash, created_at, email
 FROM users
 WHERE username = $1 LIMIT 1
 `
@@ -122,6 +181,7 @@ type GetUserByUsernameRow struct {
 	Username     string             `json:"username"`
 	PasswordHash string             `json:"password_hash"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Email        string             `json:"email"`
 }
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (GetUserByUsernameRow, error) {
@@ -131,6 +191,32 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (GetUs
 		&i.ID,
 		&i.Username,
 		&i.PasswordHash,
+		&i.CreatedAt,
+		&i.Email,
+	)
+	return i, err
+}
+
+const insertPasswordResetToken = `-- name: InsertPasswordResetToken :one
+INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+VALUES ($1, $2, $3)
+RETURNING id, user_id, token_hash, expires_at, created_at
+`
+
+type InsertPasswordResetTokenParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	TokenHash string    `json:"token_hash"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (q *Queries) InsertPasswordResetToken(ctx context.Context, arg InsertPasswordResetTokenParams) (PasswordResetToken, error) {
+	row := q.db.QueryRow(ctx, insertPasswordResetToken, arg.UserID, arg.TokenHash, arg.ExpiresAt)
+	var i PasswordResetToken
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TokenHash,
+		&i.ExpiresAt,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -172,5 +258,19 @@ type TouchSessionParams struct {
 
 func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
 	_, err := q.db.Exec(ctx, touchSession, arg.ID, arg.ExpiresAt)
+	return err
+}
+
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = $1 WHERE id = $2
+`
+
+type UpdateUserPasswordParams struct {
+	PasswordHash string    `json:"password_hash"`
+	ID           uuid.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, arg.PasswordHash, arg.ID)
 	return err
 }

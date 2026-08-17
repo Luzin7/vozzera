@@ -1,17 +1,42 @@
 -- name: CreateUser :one
-INSERT INTO users (username, password_hash)
-VALUES ($1, $2)
+INSERT INTO users (username, email, password_hash)
+VALUES ($1, $2, $3)
 RETURNING id, username, created_at;
 
 -- name: GetUserByUsername :one
-SELECT id, username, password_hash, created_at
+SELECT id, username, password_hash, created_at, email
 FROM users
 WHERE username = $1 LIMIT 1;
 
 -- name: GetUserByID :one
-SELECT id, username, password_hash, created_at, role
+SELECT id, username, password_hash, created_at, role, email
 FROM users
 WHERE id = $1 LIMIT 1;
+
+-- name: GetUserByEmail :one
+SELECT id, username, email
+FROM users
+WHERE email = $1 LIMIT 1;
+
+-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = sqlc.arg(password_hash) WHERE id = sqlc.arg(id);
+
+-- name: InsertPasswordResetToken :one
+INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+VALUES ($1, $2, $3)
+RETURNING id, user_id, token_hash, expires_at, created_at;
+
+-- name: GetPasswordResetTokenByHash :one
+SELECT id, user_id, expires_at
+FROM password_reset_tokens
+WHERE token_hash = $1 AND expires_at > NOW()
+LIMIT 1;
+
+-- name: DeletePasswordResetToken :exec
+DELETE FROM password_reset_tokens WHERE id = $1;
+
+-- name: CleanupExpiredPasswordResetTokens :exec
+DELETE FROM password_reset_tokens WHERE expires_at < NOW();
 
 -- name: InsertSession :one
 INSERT INTO sessions (user_id, expires_at)

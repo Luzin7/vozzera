@@ -18,22 +18,27 @@ func TestRegisterService_Execute_Validation(t *testing.T) {
 	}{
 		{
 			name:   "código de convite inválido",
-			input:  RegisterInput{Username: "luand", Password: "secret123", InviteCode: "x"},
+			input:  RegisterInput{Username: "luand", Password: "secret123", Email: "luan@example.com", InviteCode: "x"},
 			status: http.StatusForbidden,
 		},
 		{
 			name:   "username curto",
-			input:  RegisterInput{Username: "ab", Password: "secret123", InviteCode: "invite"},
+			input:  RegisterInput{Username: "ab", Password: "secret123", Email: "luan@example.com", InviteCode: "invite"},
 			status: http.StatusBadRequest,
 		},
 		{
 			name:   "username longo",
-			input:  RegisterInput{Username: "a", Password: "secret123", InviteCode: "invite"},
+			input:  RegisterInput{Username: "a", Password: "secret123", Email: "luan@example.com", InviteCode: "invite"},
 			status: http.StatusBadRequest,
 		},
 		{
 			name:   "senha curta",
-			input:  RegisterInput{Username: "luand", Password: "short", InviteCode: "invite"},
+			input:  RegisterInput{Username: "luand", Password: "short", Email: "luan@example.com", InviteCode: "invite"},
+			status: http.StatusBadRequest,
+		},
+		{
+			name:   "email inválido",
+			input:  RegisterInput{Username: "luand", Password: "secret123", Email: "sem-arroba", InviteCode: "invite"},
 			status: http.StatusBadRequest,
 		},
 	}
@@ -59,6 +64,7 @@ func TestRegisterService_Execute_Success(t *testing.T) {
 	out, err := svc.Execute(context.Background(), RegisterInput{
 		Username:   "  luand  ",
 		Password:   "secret123",
+		Email:      "  Luan@Example.com  ",
 		InviteCode: "invite",
 	})
 	if err != nil {
@@ -67,6 +73,9 @@ func TestRegisterService_Execute_Success(t *testing.T) {
 
 	if got.Username != "luand" {
 		t.Errorf("username no repositório = %q, want %q", got.Username, "luand")
+	}
+	if got.Email != "luan@example.com" {
+		t.Errorf("email no repositório = %q, want %q", got.Email, "luan@example.com")
 	}
 	if got.PasswordHash == "" {
 		t.Error("senha não foi hashada")
