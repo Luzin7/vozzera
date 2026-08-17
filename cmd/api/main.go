@@ -80,7 +80,13 @@ func main() {
 		"/api/voice/rooms": {Limit: 60, Window: time.Minute},
 	})
 
-	auth.RegisterHandlers(mux, authQueries, cfg.InviteCode, cfg.SessionTTL, hub.Revoke, authMw)
+	auth.RegisterHandlers(mux, auth.AuthDeps{
+		Repo:       authQueries,
+		InviteCode: cfg.InviteCode,
+		SessionTTL: cfg.SessionTTL,
+		Revoker:    hub,
+		AuthMW:     authMw,
+	})
 	chat.RegisterHandlers(mux, chatQueries, hub, authMw)
 	voice.RegisterHandlers(mux, voiceQueries, issuer, cfg.LiveKitURL, authMw)
 	swagger.RegisterHandlers(mux)
