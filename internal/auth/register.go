@@ -10,6 +10,7 @@ import (
 type RegisterInput struct {
 	Username   string
 	Password   string
+	Email      string
 	InviteCode string
 }
 
@@ -41,6 +42,11 @@ func (s *RegisterService) Execute(ctx context.Context, in RegisterInput) (Regist
 		return RegisterOutput{}, ErrInvalidPassword()
 	}
 
+	email := normalizeEmail(in.Email)
+	if !validEmail(email) {
+		return RegisterOutput{}, ErrInvalidEmail()
+	}
+
 	hashedPassword, err := HashPassword(in.Password)
 	if err != nil {
 		return RegisterOutput{}, ErrHashPassword(err)
@@ -48,6 +54,7 @@ func (s *RegisterService) Execute(ctx context.Context, in RegisterInput) (Regist
 
 	user, err := s.repo.CreateUser(ctx, CreateUserParams{
 		Username:     username,
+		Email:        email,
 		PasswordHash: hashedPassword,
 	})
 	if err != nil {

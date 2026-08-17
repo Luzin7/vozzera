@@ -31,7 +31,7 @@ func ErrHashPassword(err error) error {
 }
 
 func ErrUsernameTaken(err error) error {
-	return httpx.Wrapf(http.StatusConflict, "Erro ao criar usuário ou username já em uso", err)
+	return httpx.Wrapf(http.StatusConflict, "Erro ao criar usuário ou username/email já em uso", err)
 }
 
 func ErrInvalidCredentials() error {
@@ -52,4 +52,20 @@ func ErrUserNotFound() error {
 
 func ErrRevokeSession(err error) error {
 	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao revogar sessão", err)
+}
+
+func ErrInvalidEmail() error {
+	return httpx.Errorf(http.StatusBadRequest, "Email inválido")
+}
+
+func ErrInvalidResetToken() error {
+	return httpx.Errorf(http.StatusBadRequest, "Token inválido ou expirado")
+}
+
+func ErrCreateResetToken(err error) error {
+	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao gerar token de recuperação", err)
+}
+
+func ErrResetPassword(err error) error {
+	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao redefinir senha", err)
 }

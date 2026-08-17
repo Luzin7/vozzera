@@ -20,13 +20,16 @@ func TestSend(t *testing.T) {
 	go serve(ln, received)
 
 	addr := ln.Addr().(*net.TCPAddr)
-	m := NewSmtpMailer(Config{
+	m, err := NewSmtpMailer(Config{
 		Host:     addr.IP.String(),
 		Port:     addr.Port,
 		User:     "user",
 		Password: "pass",
 		From:     "from@example.com",
 	})
+	if err != nil {
+		t.Fatalf("NewSmtpMailer() erro inesperado: %v", err)
+	}
 
 	if err := m.Send("to@example.com", "Assunto", "<p>oi</p>"); err != nil {
 		t.Fatalf("Send() erro inesperado: %v", err)
@@ -45,6 +48,28 @@ func TestSend(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("nenhuma mensagem recebida pelo servidor")
+	}
+}
+
+func TestNewSmtpMailerInvalidConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+	}{
+		{name: "host vazio", cfg: Config{Port: 587, User: "u", Password: "p", From: "f@example.com"}},
+		{name: "porta zero", cfg: Config{Host: "smtp.example.com", User: "u", Password: "p", From: "f@example.com"}},
+		{name: "user vazio", cfg: Config{Host: "smtp.example.com", Port: 587, Password: "p", From: "f@example.com"}},
+		{name: "senha vazia", cfg: Config{Host: "smtp.example.com", Port: 587, User: "u", From: "f@example.com"}},
+		{name: "remetente vazio", cfg: Config{Host: "smtp.example.com", Port: 587, User: "u", Password: "p"}},
+		{name: "config vazia", cfg: Config{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewSmtpMailer(tt.cfg); err == nil {
+				t.Error("NewSmtpMailer() esperava erro")
+			}
+		})
 	}
 }
 

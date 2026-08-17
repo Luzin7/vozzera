@@ -31,7 +31,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [username, password, invite_code]
+              required: [username, password, email, invite_code]
               properties:
                 username:
                   type: string
@@ -41,6 +41,9 @@ paths:
                   type: string
                   minLength: 8
                   maxLength: 72
+                email:
+                  type: string
+                  format: email
                 invite_code:
                   type: string
       responses:
@@ -125,6 +128,67 @@ paths:
                   role: { type: string, enum: [user, mod, admin] }
         "401":
           description: Não autenticado ou sessão inválida
+  /api/forgot-password:
+    post:
+      tags: [auth]
+      summary: Solicitar redefinição de senha
+      operationId: requestPasswordReset
+      description: Envia um email com link de redefinição se o email estiver cadastrado. A resposta é a mesma para email inexistente, para não vazar quais contas existem.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Pedido aceito (email enviado se cadastrado)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        "400":
+          description: Email inválido
+  /api/reset-password:
+    post:
+      tags: [auth]
+      summary: Redefinir senha
+      operationId: resetPassword
+      description: Troca a senha usando o token recebido por email. O token é de uso único e expira após `PASSWORD_RESET_TTL`. Revoga todas as sessões do usuário.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token:
+                  type: string
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 72
+      responses:
+        "200":
+          description: Senha redefinida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        "400":
+          description: Token inválido/expirado ou senha inválida
   /api/rooms:
     get:
       tags: [rooms]

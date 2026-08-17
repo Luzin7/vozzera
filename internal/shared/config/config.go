@@ -27,6 +27,8 @@ type Config struct {
 	CORSOrigins        []string
 	SessionTTL         time.Duration
 	SessionTouchWindow time.Duration
+	PasswordResetTTL   time.Duration
+	AppURL             string
 	SMTPConfig         SMTPConfig
 }
 
@@ -48,6 +50,8 @@ func Load() *Config {
 		CORSOrigins:        splitList(os.Getenv("CORS_ORIGINS")),
 		SessionTTL:         durationEnv("SESSION_TTL", 7*24*time.Hour),
 		SessionTouchWindow: durationEnv("SESSION_TOUCH_WINDOW", 24*time.Hour),
+		PasswordResetTTL:   durationEnv("PASSWORD_RESET_TTL", 30*time.Minute),
+		AppURL:             os.Getenv("APP_URL"),
 		SMTPConfig: SMTPConfig{
 			Host:     os.Getenv("SMTP_HOST"),
 			Port:     intEnv("SMTP_PORT", 587),
