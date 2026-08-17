@@ -6,12 +6,12 @@ import (
 )
 
 type Config struct {
-	Host         string
-	Port         int
-	User         string
-	Password     string
-	FromAddress  string
-	FromName     string
+	Host        string
+	Port        int
+	User        string
+	Password    string
+	FromAddress string
+	FromName    string
 }
 
 type SmtpMailer struct {
