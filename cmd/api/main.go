@@ -93,7 +93,12 @@ func main() {
 		Hub:    hub,
 		AuthMW: authMw,
 	})
-	voice.RegisterHandlers(mux, voiceQueries, issuer, cfg.LiveKitURL, authMw)
+	voice.RegisterHandlers(mux, voice.VoiceDeps{
+		Repo:       voiceQueries,
+		Issuer:     issuer,
+		LiveKitURL: cfg.LiveKitURL,
+		AuthMW:     authMw,
+	})
 	swagger.RegisterHandlers(mux)
 
 	mux.Handle("GET /ws", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
