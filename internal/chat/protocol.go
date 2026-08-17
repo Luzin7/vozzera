@@ -29,14 +29,12 @@ const (
 	RoomDeleted = "deleted"
 )
 
-// InboundEvent é o que o cliente manda.
 type InboundEvent struct {
 	Type    string    `json:"type"`
 	RoomID  uuid.UUID `json:"room_id"`
 	Content string    `json:"content,omitempty"`
 }
 
-// OutboundEvent é o que o servidor devolve. Sempre com identidade resolvida
 type OutboundEvent struct {
 	Type      string    `json:"type"`
 	Action    string    `json:"action,omitempty"`

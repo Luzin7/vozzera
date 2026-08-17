@@ -32,8 +32,9 @@ func main() {
 	chatQueries := chat.New(pool)
 	voiceQueries := voice.New(pool)
 
-	hub := chat.NewHub(chatQueries)
+	hub := chat.NewHub()
 	go hub.Run()
+	sender := chat.NewSendMessageService(chatQueries, hub)
 	go cleanupExpiredSessions(authQueries)
 
 	mux := http.NewServeMux()
@@ -87,7 +88,11 @@ func main() {
 		Revoker:    hub,
 		AuthMW:     authMw,
 	})
-	chat.RegisterHandlers(mux, chatQueries, hub, authMw)
+	chat.RegisterHandlers(mux, chat.ChatDeps{
+		Repo:   chatQueries,
+		Hub:    hub,
+		AuthMW: authMw,
+	})
 	voice.RegisterHandlers(mux, voiceQueries, issuer, cfg.LiveKitURL, authMw)
 	swagger.RegisterHandlers(mux)
 
@@ -97,7 +102,7 @@ func main() {
 			http.Error(w, "Não autenticado", http.StatusUnauthorized)
 			return
 		}
-		chat.ServeWs(hub, w, r, user.UserID, user.Username, user.SessionID)
+		chat.ServeWs(hub, sender, w, r, user.UserID, user.Username, user.SessionID)
 	})))
 
 	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
