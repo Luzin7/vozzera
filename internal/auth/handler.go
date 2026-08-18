@@ -2,28 +2,16 @@ package auth
 
 import (
 	"encoding/json"
-	"errors"
-	"log"
 	"net/http"
-	"strings"
 	"time"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 )
 
-type Handler struct {
-	queries       *Queries
-	inviteCode    string
-	sessionTTL    time.Duration
-	onSessionKill func(uuid.UUID)
-}
-
 type RegisterRequest struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
+	Email      string `json:"email"`
 	InviteCode string `json:"invite_code"`
 }
 
@@ -32,17 +20,58 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-func RegisterHandlers(mux *http.ServeMux, queries *Queries, inviteCode string, sessionTTL time.Duration, onSessionKill func(uuid.UUID), authMw func(http.Handler) http.Handler) {
+type RequestPasswordResetRequest struct {
+	Email string `json:"email"`
+}
+
+type ResetPasswordRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
+type UpdateEmailRequest struct {
+	Email string `json:"email"`
+}
+
+type AuthDeps struct {
+	Repo             Repository
+	InviteCode       string
+	SessionTTL       time.Duration
+	PasswordResetTTL time.Duration
+	AppURL           string
+	Mailer           MailSender
+	Revoker          SessionRevoker
+	AuthMW           func(http.Handler) http.Handler
+}
+
+type Handler struct {
+	register             *RegisterService
+	login                *LoginService
+	me                   *MeService
+	logout               *LogoutService
+	updateEmail          *UpdateEmailService
+	requestPasswordReset *RequestPasswordResetService
+	resetPassword        *ResetPasswordService
+}
+
+func RegisterHandlers(mux *http.ServeMux, deps AuthDeps) {
 	h := &Handler{
-		queries:       queries,
-		inviteCode:    inviteCode,
-		sessionTTL:    sessionTTL,
-		onSessionKill: onSessionKill,
+		register:             NewRegisterService(deps.Repo, deps.InviteCode),
+		login:                NewLoginService(deps.Repo, deps.SessionTTL),
+		me:                   NewMeService(deps.Repo),
+		logout:               NewLogoutService(deps.Repo, deps.Revoker),
+		updateEmail:          NewUpdateEmailService(deps.Repo),
+		requestPasswordReset: NewRequestPasswordResetService(deps.Repo, deps.Mailer, deps.AppURL, deps.PasswordResetTTL),
+		resetPassword:        NewResetPasswordService(deps.Repo),
 	}
+
 	mux.HandleFunc("POST /api/register", h.handleRegister)
 	mux.HandleFunc("POST /api/login", h.handleLogin)
-	mux.Handle("POST /api/logout", authMw(http.HandlerFunc(h.handleLogout)))
-	mux.Handle("GET /api/me", authMw(http.HandlerFunc(h.handleMe)))
+	mux.Handle("POST /api/logout", deps.AuthMW(http.HandlerFunc(h.handleLogout)))
+	mux.Handle("GET /api/me", deps.AuthMW(http.HandlerFunc(h.handleMe)))
+	mux.Handle("PATCH /api/me", deps.AuthMW(http.HandlerFunc(h.handleUpdateMe)))
+	mux.HandleFunc("POST /api/forgot-password", h.handleRequestPasswordReset)
+	mux.HandleFunc("POST /api/reset-password", h.handleResetPassword)
 }
 
 func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -54,39 +83,18 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.InviteCode != h.inviteCode || h.inviteCode == "" {
-		http.Error(w, "Código de convite inválido", http.StatusForbidden)
-		return
-	}
-
-	username := strings.TrimSpace(req.Username)
-	if len(username) < 3 || len(username) > 50 {
-		http.Error(w, "Username deve ter entre 3 e 50 caracteres", http.StatusBadRequest)
-		return
-	}
-
-	if len(req.Password) < 8 || len(req.Password) > 72 {
-		http.Error(w, "Senha deve ter entre 8 e 72 caracteres", http.StatusBadRequest)
-		return
-	}
-
-	hashedPassword, err := HashPassword(req.Password)
-	if err != nil {
-		http.Error(w, "Erro ao processar senha", http.StatusInternalServerError)
-		return
-	}
-
-	user, err := h.queries.CreateUser(r.Context(), CreateUserParams{
-		Username:     username,
-		PasswordHash: hashedPassword,
+	out, err := h.register.Execute(r.Context(), RegisterInput{
+		Username:   req.Username,
+		Password:   req.Password,
+		Email:      req.Email,
+		InviteCode: req.InviteCode,
 	})
 	if err != nil {
-		http.Error(w, "Erro ao criar usuário ou username já em uso", http.StatusConflict)
+		httpx.WriteError(w, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Usuário criado", "id": user.ID.String()})
+	httpx.WriteJSON(w, http.StatusCreated, RegisterPresenter(out))
 }
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -98,54 +106,26 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Username = strings.TrimSpace(req.Username)
-	if len(req.Username) > 50 {
-		http.Error(w, "Username inválido", http.StatusBadRequest)
-		return
-	}
-
-	if len(req.Password) > 72 {
-		http.Error(w, "Senha inválida", http.StatusBadRequest)
-		return
-	}
-
-	user, err := h.queries.GetUserByUsername(r.Context(), req.Username)
-	if err != nil {
-		http.Error(w, "Credenciais inválidas", http.StatusUnauthorized)
-		return
-	}
-
-	if err := CheckPassword(user.PasswordHash, req.Password); err != nil {
-		http.Error(w, "Credenciais inválidas", http.StatusUnauthorized)
-		return
-	}
-
-	session, err := h.queries.InsertSession(r.Context(), InsertSessionParams{
-		UserID:    user.ID,
-		ExpiresAt: time.Now().Add(h.sessionTTL),
+	out, err := h.login.Execute(r.Context(), LoginInput{
+		Username: req.Username,
+		Password: req.Password,
 	})
 	if err != nil {
-		log.Printf("erro ao criar sessão: %v", err)
-		http.Error(w, "Erro ao criar sessão", http.StatusInternalServerError)
+		httpx.WriteError(w, err)
 		return
 	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "auth_token",
-		Value:    session.ID.String(),
+		Value:    out.SessionID.String(),
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteNoneMode,
-		MaxAge:   int(h.sessionTTL.Seconds()),
+		MaxAge:   int(time.Until(out.ExpiresAt).Seconds()),
 	})
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":  "Login realizado com sucesso",
-		"id":       user.ID.String(),
-		"username": user.Username,
-	})
+	httpx.WriteJSON(w, http.StatusOK, LoginPresenter(out))
 }
 
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -155,21 +135,40 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.queries.GetUserByID(r.Context(), claims.UserID)
+	out, err := h.me.Execute(r.Context(), MeInput{UserID: claims.UserID})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, "Usuário não encontrado", http.StatusUnauthorized)
-			return
-		}
-		log.Printf("erro ao buscar usuário: %v", err)
-		http.Error(w, "Erro ao buscar usuário", http.StatusInternalServerError)
+		httpx.WriteError(w, err)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{
-		"id":       user.ID.String(),
-		"username": user.Username,
+	httpx.WriteJSON(w, http.StatusOK, MePresenter(out))
+}
+
+func (h *Handler) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
+	var req UpdateEmailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Não autenticado", http.StatusUnauthorized)
+		return
+	}
+
+	out, err := h.updateEmail.Execute(r.Context(), UpdateEmailInput{
+		UserID: claims.UserID,
+		Email:  req.Email,
 	})
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, UpdateEmailPresenter(out))
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -179,13 +178,10 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.queries.DeleteSessionByID(r.Context(), claims.SessionID); err != nil {
-		log.Printf("erro ao revogar sessão: %v", err)
-		http.Error(w, "Erro ao revogar sessão", http.StatusInternalServerError)
+	if err := h.logout.Execute(r.Context(), LogoutInput{SessionID: claims.SessionID}); err != nil {
+		httpx.WriteError(w, err)
 		return
 	}
-
-	h.onSessionKill(claims.SessionID)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "auth_token",
@@ -198,4 +194,43 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleRequestPasswordReset(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
+	var req RequestPasswordResetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := h.requestPasswordReset.Execute(r.Context(), RequestPasswordResetInput{
+		Email: req.Email,
+	}); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, RequestPasswordResetPresenter(RequestPasswordResetOutput{}))
+}
+
+func (h *Handler) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
+	var req ResetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := h.resetPassword.Execute(r.Context(), ResetPasswordInput{
+		Token:    req.Token,
+		Password: req.Password,
+	}); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, ResetPasswordPresenter(ResetPasswordOutput{}))
 }

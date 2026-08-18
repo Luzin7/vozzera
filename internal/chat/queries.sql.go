@@ -48,7 +48,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (C
 const createRoom = `-- name: CreateRoom :one
 INSERT INTO rooms (name, type)
 VALUES ($1, $2)
-RETURNING id, name, type, created_at
+RETURNING id, name, type, created_at, updated_at
 `
 
 type CreateRoomParams struct {
@@ -64,6 +64,7 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 		&i.Name,
 		&i.Type,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -71,13 +72,14 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, e
 const deleteMessage = `-- name: DeleteMessage :one
 UPDATE messages
 SET deleted_at = NOW(), content = NULL
-WHERE id = $1 AND user_id = $2
+WHERE id = $1 AND (user_id = $2 OR $3::boolean)
 RETURNING id, room_id, user_id, content, created_at
 `
 
 type DeleteMessageParams struct {
 	ID     uuid.UUID `json:"id"`
 	UserID uuid.UUID `json:"user_id"`
+	IsMod  bool      `json:"is_mod"`
 }
 
 type DeleteMessageRow struct {
@@ -89,7 +91,7 @@ type DeleteMessageRow struct {
 }
 
 func (q *Queries) DeleteMessage(ctx context.Context, arg DeleteMessageParams) (DeleteMessageRow, error) {
-	row := q.db.QueryRow(ctx, deleteMessage, arg.ID, arg.UserID)
+	row := q.db.QueryRow(ctx, deleteMessage, arg.ID, arg.UserID, arg.IsMod)
 	var i DeleteMessageRow
 	err := row.Scan(
 		&i.ID,
@@ -97,6 +99,25 @@ func (q *Queries) DeleteMessage(ctx context.Context, arg DeleteMessageParams) (D
 		&i.UserID,
 		&i.Content,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const deleteRoom = `-- name: DeleteRoom :one
+DELETE FROM rooms
+WHERE id = $1
+RETURNING id, name, type, created_at, updated_at
+`
+
+func (q *Queries) DeleteRoom(ctx context.Context, id uuid.UUID) (Room, error) {
+	row := q.db.QueryRow(ctx, deleteRoom, id)
+	var i Room
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -155,7 +176,7 @@ func (q *Queries) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomPa
 }
 
 const listRooms = `-- name: ListRooms :many
-SELECT id, name, type, created_at
+SELECT id, name, type, created_at, updated_at
 FROM rooms
 ORDER BY name ASC
 `
@@ -174,6 +195,7 @@ func (q *Queries) ListRooms(ctx context.Context) ([]Room, error) {
 			&i.Name,
 			&i.Type,
 			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -212,6 +234,31 @@ func (q *Queries) UpdateMessage(ctx context.Context, arg UpdateMessageParams) (U
 		&i.ID,
 		&i.RoomID,
 		&i.Content,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateRoom = `-- name: UpdateRoom :one
+UPDATE rooms
+SET name = $1, updated_at = NOW()
+WHERE id = $2
+RETURNING id, name, type, created_at, updated_at
+`
+
+type UpdateRoomParams struct {
+	Name string    `json:"name"`
+	ID   uuid.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) (Room, error) {
+	row := q.db.QueryRow(ctx, updateRoom, arg.Name, arg.ID)
+	var i Room
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Type,
+		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err

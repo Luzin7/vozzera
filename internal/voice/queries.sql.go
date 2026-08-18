@@ -12,7 +12,7 @@ import (
 )
 
 const getRoomByID = `-- name: GetRoomByID :one
-SELECT id, name, type, created_at FROM rooms WHERE id = $1 LIMIT 1
+SELECT id, name, type, created_at, updated_at FROM rooms WHERE id = $1 LIMIT 1
 `
 
 func (q *Queries) GetRoomByID(ctx context.Context, id uuid.UUID) (Room, error) {
@@ -23,12 +23,13 @@ func (q *Queries) GetRoomByID(ctx context.Context, id uuid.UUID) (Room, error) {
 		&i.Name,
 		&i.Type,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const listVoiceRooms = `-- name: ListVoiceRooms :many
-SELECT id, name, type, created_at FROM rooms WHERE type = 'voice' ORDER BY name ASC
+SELECT id, name, type, created_at, updated_at FROM rooms WHERE type = 'voice' ORDER BY name ASC
 `
 
 func (q *Queries) ListVoiceRooms(ctx context.Context) ([]Room, error) {
@@ -45,6 +46,7 @@ func (q *Queries) ListVoiceRooms(ctx context.Context) ([]Room, error) {
 			&i.Name,
 			&i.Type,
 			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

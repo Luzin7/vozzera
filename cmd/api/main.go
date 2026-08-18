@@ -11,6 +11,7 @@ import (
 
 	"github.com/Luzin7/vozzera-backend/internal/auth"
 	"github.com/Luzin7/vozzera-backend/internal/chat"
+	"github.com/Luzin7/vozzera-backend/internal/infra/smtp"
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
 	shareddb "github.com/Luzin7/vozzera-backend/internal/shared/db"
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
@@ -20,6 +21,22 @@ import (
 
 func main() {
 	cfg := config.Load()
+
+	var mailer auth.MailSender
+	m, err := smtp.NewSmtpMailer(smtp.Config{
+		Host:        cfg.SMTPConfig.Host,
+		Port:        cfg.SMTPConfig.Port,
+		User:        cfg.SMTPConfig.User,
+		Password:    cfg.SMTPConfig.Password,
+		FromAddress: cfg.SMTPConfig.FromAddress,
+		FromName:    cfg.SMTPConfig.FromName,
+	})
+	if err != nil {
+		log.Printf("Envio de email desabilitado: %v", err)
+		mailer = smtp.NewNoopMailer()
+	} else {
+		mailer = m
+	}
 
 	ctx := context.Background()
 	pool, err := shareddb.Connect(ctx, cfg.DatabaseURL)
@@ -32,9 +49,11 @@ func main() {
 	chatQueries := chat.New(pool)
 	voiceQueries := voice.New(pool)
 
-	hub := chat.NewHub(chatQueries)
+	hub := chat.NewHub()
 	go hub.Run()
+	sender := chat.NewSendMessageService(chatQueries, hub)
 	go cleanupExpiredSessions(authQueries)
+	go cleanupExpiredPasswordResetTokens(authQueries)
 
 	mux := http.NewServeMux()
 
@@ -63,6 +82,7 @@ func main() {
 		return httpx.UserClaims{
 			UserID:    session.UserID,
 			Username:  session.Username,
+			Role:      session.Role,
 			SessionID: sid,
 		}, nil
 	})
@@ -70,18 +90,38 @@ func main() {
 	issuer := voice.NewTokenIssuer(cfg.LiveKitAPIKey, cfg.LiveKitAPISecret)
 
 	rateLimiter := httpx.NewRateLimiter(map[string]httpx.RateLimitRule{
-		"/api/login":       {Limit: 10, Window: time.Minute},
-		"/api/register":    {Limit: 5, Window: time.Minute},
-		"/api/logout":      {Limit: 30, Window: time.Minute},
-		"/api/voice/token": {Limit: 30, Window: time.Minute},
-		"/api/rooms":       {Limit: 120, Window: time.Minute},
-		"/api/rooms/":      {Limit: 120, Window: time.Minute},
-		"/api/voice/rooms": {Limit: 60, Window: time.Minute},
+		"/api/login":           {Limit: 10, Window: time.Minute},
+		"/api/register":        {Limit: 5, Window: time.Minute},
+		"/api/logout":          {Limit: 30, Window: time.Minute},
+		"/api/forgot-password": {Limit: 5, Window: time.Minute},
+		"/api/reset-password":  {Limit: 10, Window: time.Minute},
+		"/api/voice/token":     {Limit: 30, Window: time.Minute},
+		"/api/rooms":           {Limit: 120, Window: time.Minute},
+		"/api/rooms/":          {Limit: 120, Window: time.Minute},
+		"/api/voice/rooms":     {Limit: 60, Window: time.Minute},
 	})
 
-	auth.RegisterHandlers(mux, authQueries, cfg.InviteCode, cfg.SessionTTL, hub.Revoke, authMw)
-	chat.RegisterHandlers(mux, chatQueries, hub, authMw)
-	voice.RegisterHandlers(mux, voiceQueries, issuer, cfg.LiveKitURL, authMw)
+	auth.RegisterHandlers(mux, auth.AuthDeps{
+		Repo:             authQueries,
+		InviteCode:       cfg.InviteCode,
+		SessionTTL:       cfg.SessionTTL,
+		PasswordResetTTL: cfg.PasswordResetTTL,
+		AppURL:           cfg.AppURL,
+		Mailer:           mailer,
+		Revoker:          hub,
+		AuthMW:           authMw,
+	})
+	chat.RegisterHandlers(mux, chat.ChatDeps{
+		Repo:   chatQueries,
+		Hub:    hub,
+		AuthMW: authMw,
+	})
+	voice.RegisterHandlers(mux, voice.VoiceDeps{
+		Repo:       voiceQueries,
+		Issuer:     issuer,
+		LiveKitURL: cfg.LiveKitURL,
+		AuthMW:     authMw,
+	})
 	swagger.RegisterHandlers(mux)
 
 	mux.Handle("GET /ws", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +130,7 @@ func main() {
 			http.Error(w, "Não autenticado", http.StatusUnauthorized)
 			return
 		}
-		chat.ServeWs(hub, w, r, user.UserID, user.Username, user.SessionID)
+		chat.ServeWs(hub, sender, w, r, user.UserID, user.Username, user.SessionID)
 	})))
 
 	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
@@ -110,6 +150,17 @@ func cleanupExpiredSessions(queries *auth.Queries) {
 	for range ticker.C {
 		if err := queries.CleanupExpiredSessions(context.Background()); err != nil {
 			log.Printf("erro ao limpar sessões expiradas: %v", err)
+		}
+	}
+}
+
+func cleanupExpiredPasswordResetTokens(queries *auth.Queries) {
+	ticker := time.NewTicker(time.Hour * 24)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if err := queries.CleanupExpiredPasswordResetTokens(context.Background()); err != nil {
+			log.Printf("erro ao limpar tokens de recuperação expirados: %v", err)
 		}
 	}
 }

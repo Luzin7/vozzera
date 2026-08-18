@@ -31,7 +31,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [username, password, invite_code]
+              required: [username, password, email, invite_code]
               properties:
                 username:
                   type: string
@@ -41,6 +41,9 @@ paths:
                   type: string
                   minLength: 8
                   maxLength: 72
+                email:
+                  type: string
+                  format: email
                 invite_code:
                   type: string
       responses:
@@ -64,7 +67,7 @@ paths:
       tags: [auth]
       summary: Entrar
       operationId: login
-      description: Define o cookie HttpOnly `auth_token` com o id opaco da sessão. As rotas protegidas usam esse cookie. A sessão expira após `SESSION_TTL` sem atividade (expiração deslizante) e pode ser revogada em `/api/logout`.
+      description: Aceita username ou email como identificador. Define o cookie HttpOnly `auth_token` com o id opaco da sessão. As rotas protegidas usam esse cookie. A sessão expira após `SESSION_TTL` sem atividade (expiração deslizante) e pode ser revogada em `/api/logout`.
       security: []
       requestBody:
         required: true
@@ -76,7 +79,8 @@ paths:
               properties:
                 username:
                   type: string
-                  maxLength: 50
+                  description: Usuário ou email
+                  maxLength: 254
                 password:
                   type: string
                   maxLength: 72
@@ -111,7 +115,7 @@ paths:
       tags: [auth]
       summary: Usuário autenticado
       operationId: me
-      description: Devolve os dados atuais do usuário da sessão, consultando o banco (username fresco). Requer autenticação.
+      description: Devolve os dados atuais do usuário da sessão, consultando o banco (username, role e email frescos). Requer autenticação.
       responses:
         "200":
           description: Dados do usuário
@@ -122,8 +126,103 @@ paths:
                 properties:
                   id: { type: string, format: uuid }
                   username: { type: string }
+                  role: { type: string, enum: [user, mod, admin] }
+                  email: { type: string, format: email }
         "401":
           description: Não autenticado ou sessão inválida
+    patch:
+      tags: [auth]
+      summary: Atualizar email do usuário autenticado
+      operationId: updateEmail
+      description: Troca o email da conta. Não pode colidir com o email de outra conta. Requer autenticação.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Email atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  email: { type: string, format: email }
+        "400":
+          description: Email inválido
+        "401":
+          description: Não autenticado ou sessão inválida
+        "409":
+          description: Email já está em uso por outra conta
+  /api/forgot-password:
+    post:
+      tags: [auth]
+      summary: Solicitar redefinição de senha
+      operationId: requestPasswordReset
+      description: Envia um email com link de redefinição se o email estiver cadastrado. A resposta é a mesma para email inexistente, para não vazar quais contas existem.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Pedido aceito (email enviado se cadastrado)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        "400":
+          description: Email inválido
+  /api/reset-password:
+    post:
+      tags: [auth]
+      summary: Redefinir senha
+      operationId: resetPassword
+      description: Troca a senha usando o token recebido por email. O token é de uso único e expira após `PASSWORD_RESET_TTL`. Revoga todas as sessões do usuário.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token:
+                  type: string
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 72
+      responses:
+        "200":
+          description: Senha redefinida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        "400":
+          description: Token inválido/expirado ou senha inválida
   /api/rooms:
     get:
       tags: [rooms]
@@ -144,6 +243,7 @@ paths:
       tags: [rooms]
       summary: Criar sala
       operationId: createRoom
+      description: Apenas moderadores e administradores criam salas.
       requestBody:
         required: true
         content:
@@ -170,6 +270,67 @@ paths:
           description: Validação falhou
         "401":
           description: Não autenticado
+        "403":
+          description: Apenas moderadores e administradores
+  /api/rooms/{id}:
+    patch:
+      tags: [rooms]
+      summary: Editar sala
+      operationId: updateRoom
+      description: Apenas moderadores e administradores editam salas.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+      responses:
+        "200":
+          description: Sala atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "400":
+          description: Validação falhou
+        "401":
+          description: Não autenticado
+        "403":
+          description: Apenas moderadores e administradores
+        "404":
+          description: Sala não encontrada
+    delete:
+      tags: [rooms]
+      summary: Deletar sala
+      operationId: deleteRoom
+      description: Hard delete — apaga a sala e, via cascade, suas mensagens. Apenas moderadores e administradores.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Sala deletada
+        "400":
+          description: ID de sala inválido
+        "401":
+          description: Não autenticado
+        "403":
+          description: Apenas moderadores e administradores
+        "404":
+          description: Sala não encontrada
   /api/rooms/{id}/messages:
     get:
       tags: [messages]
@@ -242,7 +403,7 @@ paths:
       tags: [messages]
       summary: Deletar mensagem
       operationId: deleteMessage
-      description: Soft delete — marca `deleted_at` e zera o `content`. Só o autor deleta.
+      description: Soft delete — marca `deleted_at` e zera o `content`. O autor deleta a própria; moderadores e administradores deletam qualquer uma.
       parameters:
         - name: id
           in: path
@@ -332,6 +493,9 @@ paths:
         - `{"type":"message","action":"created","id":"<uuid>","room_id":"<uuid>","user_id":"<uuid>","username":"...","content":"...","created_at":"..."}`
         - `{"type":"message","action":"updated",...}` — mensagem editada
         - `{"type":"message","action":"deleted","id":"<uuid>","room_id":"<uuid>","user_id":"<uuid>"}`
+        - `{"type":"room","action":"created","id":"<uuid>","name":"...","room_type":"text|voice"}` — sala criada
+        - `{"type":"room","action":"updated","id":"<uuid>","name":"...","room_type":"text|voice"}` — sala editada
+        - `{"type":"room","action":"deleted","id":"<uuid>"}` — sala deletada; conexão WS permanece viva
         - `{"type":"error","error":"Mensagem deve ter entre 1 e 4000 caracteres"}`
       responses:
         "101":
@@ -353,6 +517,7 @@ components:
         name: { type: string }
         type: { type: string, enum: [text, voice] }
         created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     Message:
       type: object
       properties:

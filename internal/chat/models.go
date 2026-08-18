@@ -21,11 +21,20 @@ type Message struct {
 	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
 }
 
+type PasswordResetToken struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	TokenHash string    `json:"token_hash"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Room struct {
 	ID        uuid.UUID          `json:"id"`
 	Name      string             `json:"name"`
 	Type      string             `json:"type"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Session struct {
@@ -40,4 +49,6 @@ type User struct {
 	Username     string             `json:"username"`
 	PasswordHash string             `json:"password_hash"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Role         string             `json:"role"`
+	Email        string             `json:"email"`
 }

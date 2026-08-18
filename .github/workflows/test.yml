@@ -1,0 +1,40 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [ "main", "develop" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          files=$(gofmt -l internal cmd)
+          if [ -n "$files" ]; then
+            echo "Arquivos fora do gofmt:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Tidy
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test -count=1 ./...
