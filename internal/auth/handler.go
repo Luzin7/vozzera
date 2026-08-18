@@ -29,6 +29,10 @@ type ResetPasswordRequest struct {
 	Password string `json:"password"`
 }
 
+type UpdateEmailRequest struct {
+	Email string `json:"email"`
+}
+
 type AuthDeps struct {
 	Repo             Repository
 	InviteCode       string
@@ -45,6 +49,7 @@ type Handler struct {
 	login                *LoginService
 	me                   *MeService
 	logout               *LogoutService
+	updateEmail          *UpdateEmailService
 	requestPasswordReset *RequestPasswordResetService
 	resetPassword        *ResetPasswordService
 }
@@ -55,6 +60,7 @@ func RegisterHandlers(mux *http.ServeMux, deps AuthDeps) {
 		login:                NewLoginService(deps.Repo, deps.SessionTTL),
 		me:                   NewMeService(deps.Repo),
 		logout:               NewLogoutService(deps.Repo, deps.Revoker),
+		updateEmail:          NewUpdateEmailService(deps.Repo),
 		requestPasswordReset: NewRequestPasswordResetService(deps.Repo, deps.Mailer, deps.AppURL, deps.PasswordResetTTL),
 		resetPassword:        NewResetPasswordService(deps.Repo),
 	}
@@ -63,6 +69,7 @@ func RegisterHandlers(mux *http.ServeMux, deps AuthDeps) {
 	mux.HandleFunc("POST /api/login", h.handleLogin)
 	mux.Handle("POST /api/logout", deps.AuthMW(http.HandlerFunc(h.handleLogout)))
 	mux.Handle("GET /api/me", deps.AuthMW(http.HandlerFunc(h.handleMe)))
+	mux.Handle("PATCH /api/me", deps.AuthMW(http.HandlerFunc(h.handleUpdateMe)))
 	mux.HandleFunc("POST /api/forgot-password", h.handleRequestPasswordReset)
 	mux.HandleFunc("POST /api/reset-password", h.handleResetPassword)
 }
@@ -135,6 +142,33 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, MePresenter(out))
+}
+
+func (h *Handler) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
+	var req UpdateEmailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Não autenticado", http.StatusUnauthorized)
+		return
+	}
+
+	out, err := h.updateEmail.Execute(r.Context(), UpdateEmailInput{
+		UserID: claims.UserID,
+		Email:  req.Email,
+	})
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, UpdateEmailPresenter(out))
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
