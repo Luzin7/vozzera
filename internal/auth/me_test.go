@@ -12,7 +12,7 @@ import (
 func TestMeService_Execute(t *testing.T) {
 	repo := newFakeRepo()
 	repo.getUserByID = func(ctx context.Context, id uuid.UUID) (User, error) {
-		return User{ID: id, Username: "luand", Role: "user"}, nil
+		return User{ID: id, Username: "luand", Role: "user", Email: "luand@example.com"}, nil
 	}
 
 	svc := NewMeService(repo)
@@ -21,7 +21,7 @@ func TestMeService_Execute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() erro inesperado: %v", err)
 	}
-	if out.Username != "luand" || out.Role != "user" {
+	if out.Username != "luand" || out.Role != "user" || out.Email != "luand@example.com" {
 		t.Errorf("out inesperado: %+v", out)
 	}
 

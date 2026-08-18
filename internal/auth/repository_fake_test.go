@@ -15,10 +15,12 @@ type fakeRepo struct {
 	getUserByUsername                 func(context.Context, string) (GetUserByUsernameRow, error)
 	getUserByID                       func(context.Context, uuid.UUID) (User, error)
 	getUserByEmail                    func(context.Context, string) (GetUserByEmailRow, error)
+	getUserByIdentifier               func(context.Context, GetUserByIdentifierParams) (User, error)
 	insertSession                     func(context.Context, InsertSessionParams) (InsertSessionRow, error)
 	deleteSessionByID                 func(context.Context, uuid.UUID) error
 	deleteSessionsByUser              func(context.Context, uuid.UUID) error
 	updateUserPassword                func(context.Context, UpdateUserPasswordParams) error
+	updateUserEmail                   func(context.Context, UpdateUserEmailParams) error
 	insertPasswordResetToken          func(context.Context, InsertPasswordResetTokenParams) (PasswordResetToken, error)
 	getPasswordResetTokenByHash       func(context.Context, string) (GetPasswordResetTokenByHashRow, error)
 	deletePasswordResetToken          func(context.Context, uuid.UUID) error
@@ -39,6 +41,9 @@ func newFakeRepo() *fakeRepo {
 		getUserByEmail: func(context.Context, string) (GetUserByEmailRow, error) {
 			return GetUserByEmailRow{}, errors.New("getUserByEmail não configurado")
 		},
+		getUserByIdentifier: func(context.Context, GetUserByIdentifierParams) (User, error) {
+			return User{}, errors.New("getUserByIdentifier não configurado")
+		},
 		insertSession: func(context.Context, InsertSessionParams) (InsertSessionRow, error) {
 			return InsertSessionRow{}, errors.New("insertSession não configurado")
 		},
@@ -50,6 +55,9 @@ func newFakeRepo() *fakeRepo {
 		},
 		updateUserPassword: func(context.Context, UpdateUserPasswordParams) error {
 			return errors.New("updateUserPassword não configurado")
+		},
+		updateUserEmail: func(context.Context, UpdateUserEmailParams) error {
+			return errors.New("updateUserEmail não configurado")
 		},
 		insertPasswordResetToken: func(context.Context, InsertPasswordResetTokenParams) (PasswordResetToken, error) {
 			return PasswordResetToken{}, errors.New("insertPasswordResetToken não configurado")
@@ -82,6 +90,10 @@ func (f *fakeRepo) GetUserByEmail(ctx context.Context, email string) (GetUserByE
 	return f.getUserByEmail(ctx, email)
 }
 
+func (f *fakeRepo) GetUserByIdentifier(ctx context.Context, arg GetUserByIdentifierParams) (User, error) {
+	return f.getUserByIdentifier(ctx, arg)
+}
+
 func (f *fakeRepo) InsertSession(ctx context.Context, arg InsertSessionParams) (InsertSessionRow, error) {
 	return f.insertSession(ctx, arg)
 }
@@ -96,6 +108,10 @@ func (f *fakeRepo) DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) e
 
 func (f *fakeRepo) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
 	return f.updateUserPassword(ctx, arg)
+}
+
+func (f *fakeRepo) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error {
+	return f.updateUserEmail(ctx, arg)
 }
 
 func (f *fakeRepo) InsertPasswordResetToken(ctx context.Context, arg InsertPasswordResetTokenParams) (PasswordResetToken, error) {

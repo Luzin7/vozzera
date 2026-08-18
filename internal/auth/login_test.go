@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,11 +18,11 @@ func TestLoginService_Execute(t *testing.T) {
 	}
 
 	repo := newFakeRepo()
-	repo.getUserByUsername = func(ctx context.Context, username string) (GetUserByUsernameRow, error) {
-		if username != "luand" {
-			return GetUserByUsernameRow{}, pgx.ErrNoRows
+	repo.getUserByIdentifier = func(ctx context.Context, arg GetUserByIdentifierParams) (User, error) {
+		if arg.Username != "luand" && arg.Email != "luand@example.com" {
+			return User{}, pgx.ErrNoRows
 		}
-		return GetUserByUsernameRow{ID: uuid.New(), Username: "luand", PasswordHash: hash}, nil
+		return User{ID: uuid.New(), Username: "luand", Email: "luand@example.com", PasswordHash: hash}, nil
 	}
 
 	svc := NewLoginService(repo, time.Hour)
@@ -36,7 +37,34 @@ func TestLoginService_Execute(t *testing.T) {
 		assertStatus(t, err, http.StatusUnauthorized)
 	})
 
+	t.Run("identifier muito longo", func(t *testing.T) {
+		_, err := svc.Execute(context.Background(), LoginInput{Username: strings.Repeat("a", 255), Password: "secret123"})
+		assertStatus(t, err, http.StatusBadRequest)
+	})
+
+	t.Run("login por email", func(t *testing.T) {
+		var got GetUserByIdentifierParams
+		repo.getUserByIdentifier = func(ctx context.Context, arg GetUserByIdentifierParams) (User, error) {
+			got = arg
+			return User{ID: uuid.New(), Username: "luand", Email: "luand@example.com", PasswordHash: hash}, nil
+		}
+		repo.insertSession = func(ctx context.Context, arg InsertSessionParams) (InsertSessionRow, error) {
+			return InsertSessionRow{ID: uuid.New(), ExpiresAt: arg.ExpiresAt}, nil
+		}
+
+		_, err := svc.Execute(context.Background(), LoginInput{Username: " LUAND@Example.COM ", Password: "secret123"})
+		if err != nil {
+			t.Fatalf("Execute() erro inesperado: %v", err)
+		}
+		if got.Email != "luand@example.com" {
+			t.Errorf("Email = %q, want luand@example.com", got.Email)
+		}
+	})
+
 	t.Run("sucesso cria sessão com TTL", func(t *testing.T) {
+		repo.getUserByIdentifier = func(ctx context.Context, arg GetUserByIdentifierParams) (User, error) {
+			return User{ID: uuid.New(), Username: "luand", Email: "luand@example.com", PasswordHash: hash}, nil
+		}
 		var got InsertSessionParams
 		repo.insertSession = func(ctx context.Context, arg InsertSessionParams) (InsertSessionRow, error) {
 			got = arg

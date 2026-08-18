@@ -30,6 +30,7 @@ type MeResponse struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	Email    string `json:"email"`
 }
 
 func MePresenter(out MeOutput) MeResponse {
@@ -37,6 +38,19 @@ func MePresenter(out MeOutput) MeResponse {
 		ID:       out.ID.String(),
 		Username: out.Username,
 		Role:     out.Role,
+		Email:    out.Email,
+	}
+}
+
+type UpdateEmailResponse struct {
+	Message string `json:"message"`
+	Email   string `json:"email"`
+}
+
+func UpdateEmailPresenter(out UpdateEmailOutput) UpdateEmailResponse {
+	return UpdateEmailResponse{
+		Message: "Email atualizado",
+		Email:   out.Email,
 	}
 }
 

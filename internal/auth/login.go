@@ -32,8 +32,8 @@ func NewLoginService(repo Repository, sessionTTL time.Duration) *LoginService {
 }
 
 func (s *LoginService) Execute(ctx context.Context, in LoginInput) (LoginOutput, error) {
-	username := strings.TrimSpace(in.Username)
-	if len(username) > 50 {
+	identifier := strings.TrimSpace(in.Username)
+	if len(identifier) > 254 {
 		return LoginOutput{}, ErrUsernameTooLong()
 	}
 
@@ -41,7 +41,10 @@ func (s *LoginService) Execute(ctx context.Context, in LoginInput) (LoginOutput,
 		return LoginOutput{}, ErrPasswordTooLong()
 	}
 
-	user, err := s.repo.GetUserByUsername(ctx, username)
+	user, err := s.repo.GetUserByIdentifier(ctx, GetUserByIdentifierParams{
+		Username: identifier,
+		Email:    normalizeEmail(identifier),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LoginOutput{}, ErrInvalidCredentials()
 	}
