@@ -18,8 +18,18 @@ SELECT id, username, email
 FROM users
 WHERE email = $1 LIMIT 1;
 
+-- name: GetUserByIdentifier :one
+SELECT id, username, password_hash, created_at, role, email
+FROM users
+WHERE username = $1 OR email = $2
+ORDER BY (username = $1) DESC
+LIMIT 1;
+
 -- name: UpdateUserPassword :exec
 UPDATE users SET password_hash = sqlc.arg(password_hash) WHERE id = sqlc.arg(id);
+
+-- name: UpdateUserEmail :exec
+UPDATE users SET email = sqlc.arg(email) WHERE id = sqlc.arg(id);
 
 -- name: InsertPasswordResetToken :one
 INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)

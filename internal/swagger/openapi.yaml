@@ -67,7 +67,7 @@ paths:
       tags: [auth]
       summary: Entrar
       operationId: login
-      description: Define o cookie HttpOnly `auth_token` com o id opaco da sessão. As rotas protegidas usam esse cookie. A sessão expira após `SESSION_TTL` sem atividade (expiração deslizante) e pode ser revogada em `/api/logout`.
+      description: Aceita username ou email como identificador. Define o cookie HttpOnly `auth_token` com o id opaco da sessão. As rotas protegidas usam esse cookie. A sessão expira após `SESSION_TTL` sem atividade (expiração deslizante) e pode ser revogada em `/api/logout`.
       security: []
       requestBody:
         required: true
@@ -79,7 +79,8 @@ paths:
               properties:
                 username:
                   type: string
-                  maxLength: 50
+                  description: Usuário ou email
+                  maxLength: 254
                 password:
                   type: string
                   maxLength: 72
@@ -114,7 +115,7 @@ paths:
       tags: [auth]
       summary: Usuário autenticado
       operationId: me
-      description: Devolve os dados atuais do usuário da sessão, consultando o banco (username e role frescos). Requer autenticação.
+      description: Devolve os dados atuais do usuário da sessão, consultando o banco (username, role e email frescos). Requer autenticação.
       responses:
         "200":
           description: Dados do usuário
@@ -126,8 +127,41 @@ paths:
                   id: { type: string, format: uuid }
                   username: { type: string }
                   role: { type: string, enum: [user, mod, admin] }
+                  email: { type: string, format: email }
         "401":
           description: Não autenticado ou sessão inválida
+    patch:
+      tags: [auth]
+      summary: Atualizar email do usuário autenticado
+      operationId: updateEmail
+      description: Troca o email da conta. Não pode colidir com o email de outra conta. Requer autenticação.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Email atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  email: { type: string, format: email }
+        "400":
+          description: Email inválido
+        "401":
+          description: Não autenticado ou sessão inválida
+        "409":
+          description: Email já está em uso por outra conta
   /api/forgot-password:
     post:
       tags: [auth]

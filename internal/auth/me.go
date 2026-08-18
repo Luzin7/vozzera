@@ -16,6 +16,7 @@ type MeOutput struct {
 	ID       uuid.UUID
 	Username string
 	Role     string
+	Email    string
 }
 
 type MeService struct {
@@ -35,5 +36,5 @@ func (s *MeService) Execute(ctx context.Context, in MeInput) (MeOutput, error) {
 		return MeOutput{}, ErrGetUser(err)
 	}
 
-	return MeOutput{ID: user.ID, Username: user.Username, Role: user.Role}, nil
+	return MeOutput{ID: user.ID, Username: user.Username, Role: user.Role, Email: user.Email}, nil
 }

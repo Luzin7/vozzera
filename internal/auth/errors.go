@@ -58,6 +58,14 @@ func ErrInvalidEmail() error {
 	return httpx.Errorf(http.StatusBadRequest, "Email inválido")
 }
 
+func ErrEmailTaken() error {
+	return httpx.Errorf(http.StatusConflict, "Email já está em uso")
+}
+
+func ErrUpdateEmail(err error) error {
+	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao atualizar email", err)
+}
+
 func ErrInvalidResetToken() error {
 	return httpx.Errorf(http.StatusBadRequest, "Token inválido ou expirado")
 }
