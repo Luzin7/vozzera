@@ -2,18 +2,14 @@ package config
 
 import (
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
-type SMTPConfig struct {
-	Host        string
-	Port        int
-	User        string
-	Password    string
+type SendGridConfig struct {
+	APIKey      string
 	FromAddress string
 	FromName    string
 }
@@ -30,7 +26,7 @@ type Config struct {
 	SessionTouchWindow time.Duration
 	PasswordResetTTL   time.Duration
 	AppURL             string
-	SMTPConfig         SMTPConfig
+	SendGridConfig     SendGridConfig
 }
 
 func Load() *Config {
@@ -53,11 +49,8 @@ func Load() *Config {
 		SessionTouchWindow: durationEnv("SESSION_TOUCH_WINDOW", 24*time.Hour),
 		PasswordResetTTL:   durationEnv("PASSWORD_RESET_TTL", 30*time.Minute),
 		AppURL:             os.Getenv("APP_URL"),
-		SMTPConfig: SMTPConfig{
-			Host:        os.Getenv("SMTP_HOST"),
-			Port:        intEnv("SMTP_PORT", 587),
-			User:        os.Getenv("SMTP_USER"),
-			Password:    os.Getenv("SMTP_PASS"),
+		SendGridConfig: SendGridConfig{
+			APIKey:      os.Getenv("SENDGRID_API_KEY"),
 			FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
 			FromName:    os.Getenv("MAIL_FROM_NAME"),
 		},
@@ -74,18 +67,6 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
-}
-
-func intEnv(key string, fallback int) int {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return fallback
-	}
-	return n
 }
 
 func splitList(raw string) []string {
