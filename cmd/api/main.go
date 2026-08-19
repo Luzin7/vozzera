@@ -11,7 +11,7 @@ import (
 
 	"github.com/Luzin7/vozzera-backend/internal/auth"
 	"github.com/Luzin7/vozzera-backend/internal/chat"
-	"github.com/Luzin7/vozzera-backend/internal/infra/smtp"
+	"github.com/Luzin7/vozzera-backend/internal/infra/sendgrid"
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
 	shareddb "github.com/Luzin7/vozzera-backend/internal/shared/db"
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
@@ -23,17 +23,14 @@ func main() {
 	cfg := config.Load()
 
 	var mailer auth.MailSender
-	m, err := smtp.NewSmtpMailer(smtp.Config{
-		Host:        cfg.SMTPConfig.Host,
-		Port:        cfg.SMTPConfig.Port,
-		User:        cfg.SMTPConfig.User,
-		Password:    cfg.SMTPConfig.Password,
-		FromAddress: cfg.SMTPConfig.FromAddress,
-		FromName:    cfg.SMTPConfig.FromName,
+	m, err := sendgrid.NewSendGridMailer(sendgrid.Config{
+		APIKey:      cfg.SendGridConfig.APIKey,
+		FromAddress: cfg.SendGridConfig.FromAddress,
+		FromName:    cfg.SendGridConfig.FromName,
 	})
 	if err != nil {
 		log.Printf("Envio de email desabilitado: %v", err)
-		mailer = smtp.NewNoopMailer()
+		mailer = sendgrid.NewNoopMailer()
 	} else {
 		mailer = m
 	}

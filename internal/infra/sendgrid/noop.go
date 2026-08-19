@@ -1,4 +1,4 @@
-package smtp
+package sendgrid
 
 type NoopMailer struct{}
 
