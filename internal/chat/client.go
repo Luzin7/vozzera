@@ -63,6 +63,16 @@ func (c *Client) readPump() {
 			c.hub.join <- roomJoin{client: c, roomID: in.RoomID}
 			continue
 
+		case EventTyping:
+			c.hub.broadcast <- OutboundEvent{
+				Type:     EventTyping,
+				RoomID:   in.RoomID,
+				UserID:   c.UserID,
+				Username: c.Username,
+				Action:   in.Content,
+			}
+			continue
+
 		case EventMessage:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_, err := c.sender.Execute(ctx, SendMessageInput{
