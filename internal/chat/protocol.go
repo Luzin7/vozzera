@@ -18,6 +18,11 @@ const (
 )
 
 const (
+	EventTypingStart = "start"
+	EventTypingStop  = "stop"
+)
+
+const (
 	MessageCreated = "created"
 	MessageUpdated = "updated"
 	MessageDeleted = "deleted"
@@ -33,6 +38,7 @@ type InboundEvent struct {
 	Type    string    `json:"type"`
 	RoomID  uuid.UUID `json:"room_id"`
 	Content string    `json:"content,omitempty"`
+	Action  string    `json:"action,omitempty"`
 }
 
 type OutboundEvent struct {
