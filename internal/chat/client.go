@@ -69,7 +69,7 @@ func (c *Client) readPump() {
 				RoomID:   in.RoomID,
 				UserID:   c.UserID,
 				Username: c.Username,
-				Action:   in.Content,
+				Action:   in.Action,
 			}
 			continue
 
