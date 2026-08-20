@@ -19,7 +19,7 @@ Servidor sobe em `http://localhost:8080`. Pra confirmar que tá tudo pé:
 curl localhost:8080/api/rooms   # 401 sem cookie = servidor no ar
 ```
 
-Trabalhe sempre em branch a partir de `main`. PR direto, sem develop/staging.
+Trabalhe sempre em branch a partir de `develop`. `main` só recebe releases via merge de `develop` — não abra PR direto pra `main`.
 
 ### Versão do Go
 
