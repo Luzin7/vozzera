@@ -68,29 +68,13 @@ func (c *Client) readPump() {
 				log.Printf("ação de digitação inválida: %s", in.Action)
 				continue
 			}
-			if _, ok := c.Rooms[in.RoomID]; !ok {
-				log.Printf("usuário %s tentou enviar evento de digitação para sala %s sem estar presente", c.UserID, in.RoomID)
-				continue
+			c.hub.broadcast <- OutboundEvent{
+				Type:     EventTyping,
+				RoomID:   in.RoomID,
+				UserID:   c.UserID,
+				Username: c.Username,
+				Action:   in.Action,
 			}
-			if in.Action == EventTypingStart {
-				c.hub.broadcast <- OutboundEvent{
-					Type:     EventTyping,
-					RoomID:   in.RoomID,
-					UserID:   c.UserID,
-					Username: c.Username,
-					Action:   EventTypingStart,
-				}
-			}
-			if in.Action == EventTypingStop {
-				c.hub.broadcast <- OutboundEvent{
-					Type:     EventTyping,
-					RoomID:   in.RoomID,
-					UserID:   c.UserID,
-					Username: c.Username,
-					Action:   EventTypingStop,
-				}
-			}
-
 			continue
 
 		case EventMessage:
