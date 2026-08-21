@@ -1,6 +1,9 @@
 # Binários
 bin/
 
+#OpenCode
+.opencode/
+
 # Env
 .env
 .env.local
