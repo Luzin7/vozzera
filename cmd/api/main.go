@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"net/http"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/Luzin7/vozzera-backend/internal/auth"
 	"github.com/Luzin7/vozzera-backend/internal/chat"
@@ -53,34 +50,19 @@ func main() {
 	go cleanupExpiredPasswordResetTokens(authQueries)
 
 	mux := http.NewServeMux()
+	sessionAuth := auth.NewSessionAuthenticator(authQueries, cfg.SessionTouchWindow, cfg.SessionTTL)
 
 	authMw := httpx.Auth(func(ctx context.Context, raw string) (httpx.UserClaims, error) {
-		sid, err := uuid.Parse(raw)
-		if err != nil {
-			return httpx.UserClaims{}, errors.New("cookie de sessão inválido")
-		}
-
-		session, err := authQueries.GetSessionByID(ctx, sid)
+		session, err := sessionAuth.AuthenticateSession(ctx, raw)
 		if err != nil {
 			return httpx.UserClaims{}, err
-		}
-
-		if time.Now().After(session.ExpiresAt) {
-			return httpx.UserClaims{}, errors.New("sessão expirada")
-		}
-
-		if time.Until(session.ExpiresAt) < cfg.SessionTouchWindow {
-			_ = authQueries.TouchSession(ctx, auth.TouchSessionParams{
-				ID:        sid,
-				ExpiresAt: time.Now().Add(cfg.SessionTTL),
-			})
 		}
 
 		return httpx.UserClaims{
 			UserID:    session.UserID,
 			Username:  session.Username,
 			Role:      session.Role,
-			SessionID: sid,
+			SessionID: session.ID,
 		}, nil
 	})
 

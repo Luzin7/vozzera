@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,6 +26,8 @@ type fakeRepo struct {
 	getPasswordResetTokenByHash       func(context.Context, string) (GetPasswordResetTokenByHashRow, error)
 	deletePasswordResetToken          func(context.Context, uuid.UUID) error
 	cleanupExpiredPasswordResetTokens func(context.Context) error
+	getSessionByID                    func(context.Context, uuid.UUID) (GetSessionByIDRow, error)
+	touchSession                      func(context.Context, TouchSessionParams) error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -128,6 +131,35 @@ func (f *fakeRepo) DeletePasswordResetToken(ctx context.Context, id uuid.UUID) e
 
 func (f *fakeRepo) CleanupExpiredPasswordResetTokens(ctx context.Context) error {
 	return f.cleanupExpiredPasswordResetTokens(ctx)
+}
+
+func (f *fakeRepo) GetSessionByID(ctx context.Context, id uuid.UUID) (GetSessionByIDRow, error) {
+	return f.getSessionByID(ctx, id)
+}
+
+func (f *fakeRepo) TouchSession(ctx context.Context, arg TouchSessionParams) error {
+	if f.getSessionByID == nil {
+		return errors.New("getSessionByID não configurado")
+	}
+
+	session, err := f.getSessionByID(ctx, arg.ID)
+	if err != nil {
+		return err
+	}
+
+	if time.Now().After(session.ExpiresAt) {
+		return ErrSessionExpired()
+	}
+
+	if time.Until(arg.ExpiresAt) < 0 {
+		return ErrTouchSession(errors.New("nova data de expiração deve ser maior que a atual"))
+	}
+
+	if f.touchSession == nil {
+		return errors.New("touchSession não configurado")
+	}
+
+	return f.touchSession(ctx, arg)
 }
 
 func assertStatus(t *testing.T, err error, want int) {
