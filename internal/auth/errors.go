@@ -10,6 +10,10 @@ func ErrInvalidInviteCode() error {
 	return httpx.Errorf(http.StatusForbidden, "Código de convite inválido")
 }
 
+func ErrInvalidSessionID() error {
+	return httpx.Errorf(http.StatusUnauthorized, "ID de sessão inválido")
+}
+
 func ErrInvalidUsername() error {
 	return httpx.Errorf(http.StatusBadRequest, "Username deve ter entre 3 e 50 caracteres")
 }
@@ -40,6 +44,14 @@ func ErrInvalidCredentials() error {
 
 func ErrCreateSession(err error) error {
 	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao criar sessão", err)
+}
+
+func ErrSessionExpired() error {
+	return httpx.Errorf(http.StatusUnauthorized, "Sessão expirada")
+}
+
+func ErrTouchSession(err error) error {
+	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao atualizar sessão", err)
 }
 
 func ErrGetUser(err error) error {
