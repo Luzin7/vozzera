@@ -2,7 +2,6 @@ package chat
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 )
 
 type CreateRoomRequest struct {
@@ -26,59 +26,39 @@ type UpdateMessageRequest struct {
 }
 
 type ChatDeps struct {
-	Repo   Repository
-	Hub    *Hub
-	AuthMW func(http.Handler) http.Handler
+	Repo           Repository
+	Publisher      realtime.Publisher
+	Registerer     realtime.Registerer
+	Handler        realtime.InboundHandler
+	AuthMW         func(http.Handler) http.Handler
+	AllowedOrigins []string
 }
 
 type Handler struct {
-	listRooms     *ListRoomsService
-	createRoom    *CreateRoomService
-	updateRoom    *UpdateRoomService
-	deleteRoom    *DeleteRoomService
-	getMessages   *GetMessagesService
-	updateMessage *UpdateMessageService
-	deleteMessage *DeleteMessageService
-}
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin:     func(r *http.Request) bool { return true },
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-}
-
-func ServeWs(hub *Hub, sender *SendMessageService, w http.ResponseWriter, r *http.Request, userID uuid.UUID, username string, sessionID uuid.UUID) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("erro no upgrade HTTP->WS: %v", err)
-		return
-	}
-
-	client := &Client{
-		hub:       hub,
-		sender:    sender,
-		conn:      conn,
-		send:      make(chan []byte, 256),
-		UserID:    userID,
-		Username:  username,
-		SessionID: sessionID,
-		Rooms:     make(map[uuid.UUID]bool),
-	}
-	client.hub.register <- client
-
-	go client.writePump()
-	go client.readPump()
+	listRooms      *ListRoomsService
+	createRoom     *CreateRoomService
+	updateRoom     *UpdateRoomService
+	deleteRoom     *DeleteRoomService
+	getMessages    *GetMessagesService
+	updateMessage  *UpdateMessageService
+	deleteMessage  *DeleteMessageService
+	registerer     realtime.Registerer
+	handler        realtime.InboundHandler
+	allowedOrigins []string
 }
 
 func RegisterHandlers(mux *http.ServeMux, deps ChatDeps) {
 	h := &Handler{
-		listRooms:     NewListRoomsService(deps.Repo),
-		createRoom:    NewCreateRoomService(deps.Repo, deps.Hub),
-		updateRoom:    NewUpdateRoomService(deps.Repo, deps.Hub),
-		deleteRoom:    NewDeleteRoomService(deps.Repo, deps.Hub),
-		getMessages:   NewGetMessagesService(deps.Repo),
-		updateMessage: NewUpdateMessageService(deps.Repo, deps.Hub),
-		deleteMessage: NewDeleteMessageService(deps.Repo, deps.Hub),
+		listRooms:      NewListRoomsService(deps.Repo),
+		createRoom:     NewCreateRoomService(deps.Repo, deps.Publisher),
+		updateRoom:     NewUpdateRoomService(deps.Repo, deps.Publisher),
+		deleteRoom:     NewDeleteRoomService(deps.Repo, deps.Publisher),
+		getMessages:    NewGetMessagesService(deps.Repo),
+		updateMessage:  NewUpdateMessageService(deps.Repo, deps.Publisher),
+		deleteMessage:  NewDeleteMessageService(deps.Repo, deps.Publisher),
+		registerer:     deps.Registerer,
+		handler:        deps.Handler,
+		allowedOrigins: deps.AllowedOrigins,
 	}
 
 	mux.Handle("GET /api/rooms", deps.AuthMW(http.HandlerFunc(h.handleListRooms)))
@@ -88,6 +68,7 @@ func RegisterHandlers(mux *http.ServeMux, deps ChatDeps) {
 	mux.Handle("GET /api/rooms/{id}/messages", deps.AuthMW(http.HandlerFunc(h.handleGetMessages)))
 	mux.Handle("PATCH /api/rooms/{id}/messages/{content_id}", deps.AuthMW(http.HandlerFunc(h.handleUpdateMessage)))
 	mux.Handle("DELETE /api/rooms/{id}/messages/{content_id}", deps.AuthMW(http.HandlerFunc(h.handleDeleteMessage)))
+	mux.Handle("GET /api/ws", deps.AuthMW(http.HandlerFunc(h.handleWebSocket)))
 }
 
 func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
@@ -284,4 +265,38 @@ func (h *Handler) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, DeleteMessagePresenter(out.Message))
+}
+
+func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Não autenticado", http.StatusUnauthorized)
+		return
+	}
+
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			for _, allowed := range h.allowedOrigins {
+				if origin == allowed {
+					return true
+				}
+			}
+			return false
+		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+
+	client := realtime.NewClient(h.registerer, conn, claims.UserID, claims.Username, claims.SessionID, h.handler)
+
+	h.registerer.Register(client)
+
+	go client.WritePump()
+	go client.ReadPump()
 }

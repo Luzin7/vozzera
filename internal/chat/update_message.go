@@ -2,8 +2,12 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -21,12 +25,12 @@ type UpdateMessageOutput struct {
 }
 
 type UpdateMessageService struct {
-	repo   Repository
-	events RoomBroadcaster
+	repo      Repository
+	publisher realtime.Publisher
 }
 
-func NewUpdateMessageService(repo Repository, events RoomBroadcaster) *UpdateMessageService {
-	return &UpdateMessageService{repo: repo, events: events}
+func NewUpdateMessageService(repo Repository, publisher realtime.Publisher) *UpdateMessageService {
+	return &UpdateMessageService{repo: repo, publisher: publisher}
 }
 
 func (s *UpdateMessageService) Execute(ctx context.Context, in UpdateMessageInput) (UpdateMessageOutput, error) {
@@ -49,15 +53,31 @@ func (s *UpdateMessageService) Execute(ctx context.Context, in UpdateMessageInpu
 		return UpdateMessageOutput{}, ErrUpdateMessage(err)
 	}
 
-	s.events.Broadcast(OutboundEvent{
-		Type:      EventMessage,
-		Action:    MessageUpdated,
-		ID:        msg.ID,
+	payload := MessageUpdatedPayload{
+		ContentID: in.ContentID,
 		RoomID:    in.RoomID,
 		UserID:    in.UserID,
-		Content:   msg.Content.String,
-		UpdatedAt: msg.UpdatedAt.Time,
-	})
+		Content:   in.Content,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return UpdateMessageOutput{}, ErrUpdateMessage(err)
+	}
+
+	topic := realtime.Topic(fmt.Sprintf("room:%s", in.RoomID.String()))
+
+	env := realtime.Envelope{
+		V:     1,
+		Type:  EventMessageUpdated,
+		Topic: topic,
+		TS:    time.Now(),
+		Data:  payloadBytes,
+	}
+
+	err = s.publisher.Publish(ctx, topic, env)
+	if err != nil {
+		return UpdateMessageOutput{}, ErrUpdateMessage(err)
+	}
 
 	return UpdateMessageOutput{Message: msg}, nil
 }

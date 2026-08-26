@@ -9,6 +9,7 @@ import (
 
 type fakeRepo struct {
 	listRooms         func(context.Context) ([]Room, error)
+	getRoomByID       func(context.Context, uuid.UUID) (Room, error)
 	createRoom        func(context.Context, CreateRoomParams) (Room, error)
 	updateRoom        func(context.Context, UpdateRoomParams) (Room, error)
 	deleteRoom        func(context.Context, uuid.UUID) (Room, error)
@@ -22,6 +23,9 @@ func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		listRooms: func(context.Context) ([]Room, error) {
 			return nil, errors.New("listRooms não configurado")
+		},
+		getRoomByID: func(context.Context, uuid.UUID) (Room, error) {
+			return Room{}, errors.New("getRoomByID não configurado")
 		},
 		createRoom: func(context.Context, CreateRoomParams) (Room, error) {
 			return Room{}, errors.New("createRoom não configurado")
@@ -51,6 +55,10 @@ func (f *fakeRepo) ListRooms(ctx context.Context) ([]Room, error) {
 	return f.listRooms(ctx)
 }
 
+func (f *fakeRepo) GetRoomByID(ctx context.Context, id uuid.UUID) (Room, error) {
+	return f.getRoomByID(ctx, id)
+}
+
 func (f *fakeRepo) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error) {
 	return f.createRoom(ctx, arg)
 }
@@ -78,5 +86,3 @@ func (f *fakeRepo) DeleteMessage(ctx context.Context, arg DeleteMessageParams) (
 func (f *fakeRepo) CreateMessage(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
 	return f.createMessage(ctx, arg)
 }
-
-var _ Repository = (*fakeRepo)(nil)

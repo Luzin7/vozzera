@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestSendMessageService_Execute(t *testing.T) {
 		}, nil
 	}
 
-	events := &fakeBroadcaster{}
+	events := &fakePublisher{}
 	svc := NewSendMessageService(repo, events)
 
 	t.Run("conteúdo em branco", func(t *testing.T) {
@@ -46,15 +47,19 @@ func TestSendMessageService_Execute(t *testing.T) {
 			t.Errorf("content = %q, want %q", out.Content, "oi")
 		}
 
-		if len(events.events) != 1 {
-			t.Fatalf("events = %d, want 1", len(events.events))
+		if len(events.envelopes) != 1 {
+			t.Fatalf("envelopes = %d, want 1", len(events.envelopes))
 		}
-		ev := events.events[0]
-		if ev.Action != MessageCreated {
-			t.Errorf("action = %q, want %q", ev.Action, MessageCreated)
+		env := events.envelopes[0]
+		if env.Type != EventMessageCreated {
+			t.Errorf("type = %q, want %q", env.Type, EventMessageCreated)
 		}
-		if ev.Username != "luand" {
-			t.Errorf("username = %q, want %q", ev.Username, "luand")
+		var payload MessagePayload
+		if err := json.Unmarshal(env.Data, &payload); err != nil {
+			t.Fatalf("Unmarshal payload: %v", err)
+		}
+		if payload.Username != "luand" {
+			t.Errorf("username = %q, want %q", payload.Username, "luand")
 		}
 	})
 }
