@@ -1,9 +1,7 @@
-package chat
+package realtime
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"time"
 
@@ -19,24 +17,36 @@ const (
 )
 
 type Client struct {
-	hub       *Hub
-	sender    *SendMessageService
-	conn      *websocket.Conn
-	send      chan []byte
-	UserID    uuid.UUID
-	Username  string
-	SessionID uuid.UUID
-	Rooms     map[uuid.UUID]bool
+	registerer Registerer
+	conn       *websocket.Conn
+	send       chan []byte
+	UserID     uuid.UUID
+	Username   string
+	SessionID  uuid.UUID
+	Topics     map[Topic]bool
+	Handler    InboundHandler
 }
 
-func (c *Client) readPump() {
+func NewClient(registerer Registerer, conn *websocket.Conn, userID uuid.UUID, username string, sessionID uuid.UUID, handler InboundHandler) *Client {
+	return &Client{
+		registerer: registerer,
+		conn:       conn,
+		send:       make(chan []byte, 256),
+		UserID:     userID,
+		Username:   username,
+		SessionID:  sessionID,
+		Topics:     make(map[Topic]bool),
+		Handler:    handler,
+	}
+}
+
+func (c *Client) ReadPump() {
 	defer func() {
-		c.hub.unregister <- c
+		c.registerer.Unregister(c)
 		c.conn.Close()
 	}()
 
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		c.conn.SetReadLimit(maxMessageSize)
@@ -47,62 +57,26 @@ func (c *Client) readPump() {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("erro de leitura: %v", err)
+				log.Printf("erro de leitura de websocket: %v", err)
 			}
 			break
 		}
 
-		var in InboundEvent
+		var in Envelope
 		if err := json.Unmarshal(message, &in); err != nil {
-			log.Printf("erro ao desserializar evento: %v", err)
+			log.Printf("envelope mal formado recebido da rede: %v", err)
 			continue
 		}
 
-		switch in.Type {
-		case EventJoin:
-			c.hub.join <- roomJoin{client: c, roomID: in.RoomID}
-			continue
-
-		case EventTyping:
-			if in.Action != EventTypingStart && in.Action != EventTypingStop {
-				log.Printf("ação de digitação inválida: %s", in.Action)
-				continue
+		if c.Handler != nil {
+			if err := c.Handler.HandleMessage(c, in); err != nil {
+				log.Printf("erro ao lidar com a mensagem recebida: %v", err)
 			}
-			c.hub.broadcast <- OutboundEvent{
-				Type:     EventTyping,
-				RoomID:   in.RoomID,
-				UserID:   c.UserID,
-				Username: c.Username,
-				Action:   in.Action,
-			}
-			continue
-
-		case EventMessage:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, err := c.sender.Execute(ctx, SendMessageInput{
-				RoomID:   in.RoomID,
-				UserID:   c.UserID,
-				Username: c.Username,
-				Content:  in.Content,
-			})
-			cancel()
-
-			if err != nil {
-				if errors.Is(err, ErrInvalidContent) {
-					c.send <- jsonMessage(OutboundEvent{Type: EventError, Error: err.Error()})
-					continue
-				}
-				log.Printf("erro ao salvar mensagem: %v", err)
-			}
-			continue
-
-		default:
-			continue
 		}
 	}
 }
 
-func (c *Client) writePump() {
+func (c *Client) WritePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()

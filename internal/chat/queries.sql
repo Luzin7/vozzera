@@ -21,6 +21,11 @@ SELECT id, name, type, created_at, updated_at
 FROM rooms
 ORDER BY name ASC;
 
+-- name: GetRoomByID :one
+SELECT id, name, type, created_at, updated_at
+FROM rooms
+WHERE id = $1;
+
 -- name: CreateRoom :one
 INSERT INTO rooms (name, type)
 VALUES ($1, $2)

@@ -1,7 +1,9 @@
 openapi: 3.0.3
 info:
   title: Vozzera API
-  description: API do Vozzera — salas de texto e voz, mensagens e autenticação.
+  description: |
+    API do Vozzera — salas de texto e voz, mensagens e autenticação.
+    WebSocket em `/api/ws` com protocolo versionado (envelope `v:1`).
   version: 1.0.0
 servers:
   - url: http://localhost:8080
@@ -17,6 +19,8 @@ tags:
     description: Mensagens das salas
   - name: voice
     description: Salas de voz (LiveKit)
+  - name: websocket
+    description: Conexão WebSocket para eventos em tempo real
 paths:
   /api/register:
     post:
@@ -115,7 +119,7 @@ paths:
       tags: [auth]
       summary: Usuário autenticado
       operationId: me
-      description: Devolve os dados atuais do usuário da sessão, consultando o banco (username, role e email frescos). Requer autenticação.
+      description: Devolve os dados atuais do usuário da sessão, consultando o banco. Requer autenticação.
       responses:
         "200":
           description: Dados do usuário
@@ -243,7 +247,7 @@ paths:
       tags: [rooms]
       summary: Criar sala
       operationId: createRoom
-      description: Apenas moderadores e administradores criam salas.
+      description: Apenas moderadores e administradores criam salas. Dispara `room.created` no tópico `app:rooms`.
       requestBody:
         required: true
         content:
@@ -277,7 +281,7 @@ paths:
       tags: [rooms]
       summary: Editar sala
       operationId: updateRoom
-      description: Apenas moderadores e administradores editam salas.
+      description: Apenas moderadores e administradores editam salas. Dispara `room.updated` no tópico `room:<id>`.
       parameters:
         - name: id
           in: path
@@ -314,7 +318,7 @@ paths:
       tags: [rooms]
       summary: Deletar sala
       operationId: deleteRoom
-      description: Hard delete — apaga a sala e, via cascade, suas mensagens. Apenas moderadores e administradores.
+      description: Hard delete — apaga a sala e, via cascade, suas mensagens. Apenas moderadores e administradores. Dispara `room.deleted` no tópico `room:<id>`.
       parameters:
         - name: id
           in: path
@@ -364,7 +368,7 @@ paths:
       tags: [messages]
       summary: Editar mensagem
       operationId: updateMessage
-      description: Só o autor edita. Mensagem deletada não pode ser editada.
+      description: Só o autor edita. Mensagem deletada não pode ser editada. Dispara `message.updated` no tópico `room:<id>`.
       parameters:
         - name: id
           in: path
@@ -403,7 +407,7 @@ paths:
       tags: [messages]
       summary: Deletar mensagem
       operationId: deleteMessage
-      description: Soft delete — marca `deleted_at` e zera o `content`. O autor deleta a própria; moderadores e administradores deletam qualquer uma.
+      description: Soft delete — marca `deleted_at` e zera o `content`. O autor deleta a própria; moderadores e administradores deletam qualquer uma. Dispara `message.deleted` no tópico `room:<id>`.
       parameters:
         - name: id
           in: path
@@ -430,6 +434,146 @@ paths:
           description: Não autenticado
         "403":
           description: Não é o autor, ou mensagem não encontrada/deletada
+  /api/ws:
+    get:
+      tags: [websocket]
+      summary: Conexão WebSocket para eventos em tempo real
+      operationId: wsConnect
+      description: |
+        Conexão autenticada pelo cookie `auth_token`. O servidor valida a origem contra CORS_ORIGINS.
+
+        ## Formato do envelope
+
+        Todas as mensagens usam o envelope versionado:
+
+        ```json
+        {"v":1,"type":"<evento>","topic":"<tópico>","ts":"<ISO 8601>","data":{...}}
+        ```
+
+        ## Comandos enviados pelo cliente
+
+        | type | data | Descrição |
+        |------|------|-----------|
+        | `room.subscribe` | `{"room_id":"<uuid>"}` | Assinar tópico de uma sala (`room:<uuid>`). A sala precisa existir e ser do tipo `text`. |
+        | `room.unsubscribe` | `{"room_id":"<uuid>"}` | Sair do tópico da sala |
+        | `typing.start` | `{"room_id":"<uuid>"}` | Indicar que está digitando |
+        | `typing.stop` | `{"room_id":"<uuid>"}` | Indicar que parou de digitar |
+        | `message` | `{"room_id":"<uuid>","content":"texto"}` | Enviar mensagem (1–4000 caracteres). Salva no banco e dispara `message.created` |
+
+        ## Eventos recebidos pelo cliente
+
+        ### message.created
+        Tópico `room:<uuid>` — nova mensagem na sala:
+        ```json
+        {
+          "v":1,
+          "type":"message.created",
+          "topic":"room:<uuid>",
+          "ts":"2026-08-26T12:00:00Z",
+          "data":{
+            "id":"<uuid>",
+            "room_id":"<uuid>",
+            "user_id":"<uuid>",
+            "username":"joao",
+            "content":"texto",
+            "created_at":"2026-08-26T12:00:00Z"
+          }
+        }
+        ```
+
+        ### message.updated
+        Tópico `room:<uuid>` — mensagem editada:
+        ```json
+        {
+          "v":1,
+          "type":"message.updated",
+          "topic":"room:<uuid>",
+          "data":{
+            "content_id":"<uuid>",
+            "room_id":"<uuid>",
+            "user_id":"<uuid>",
+            "content":"editado"
+          }
+        }
+        ```
+
+        ### message.deleted
+        Tópico `room:<uuid>` — mensagem deletada:
+        ```json
+        {
+          "v":1,
+          "type":"message.deleted",
+          "topic":"room:<uuid>",
+          "data":{
+            "content_id":"<uuid>",
+            "room_id":"<uuid>",
+            "user_id":"<uuid>",
+            "is_mod":false
+          }
+        }
+        ```
+
+        ### room.created
+        Tópico `app:rooms` — sala criada:
+        ```json
+        {
+          "v":1,
+          "type":"room.created",
+          "topic":"app:rooms",
+          "data":{
+            "id":"<uuid>",
+            "name":"sala",
+            "type":"text",
+            "created_at":"2026-08-26T12:00:00Z"
+          }
+        }
+        ```
+
+        ### room.updated
+        Tópico `room:<uuid>` — sala editada:
+        ```json
+        {
+          "v":1,
+          "type":"room.updated",
+          "topic":"room:<uuid>",
+          "data":{
+            "id":"<uuid>",
+            "name":"novo-nome",
+            "type":"text",
+            "created_at":"2026-08-26T12:00:00Z"
+          }
+        }
+        ```
+
+        ### room.deleted
+        Tópico `room:<uuid>` — sala deletada:
+        ```json
+        {
+          "v":1,
+          "type":"room.deleted",
+          "topic":"room:<uuid>",
+          "data":{"id":"<uuid>","is_mod":false}
+        }
+        ```
+
+        ### typing.start / typing.stop
+        Tópico `room:<uuid>` — reporte de digitação:
+        ```json
+        {
+          "v":1,
+          "type":"typing.start",
+          "topic":"room:<uuid>",
+          "data":{"user_id":"<uuid>","username":"joao"}
+        }
+        ```
+
+        ### system.error
+        Tópico genérico — erro do servidor (ex: conteúdo inválido)
+      responses:
+        "101":
+          description: Upgraded para WebSocket
+        "401":
+          description: Não autenticado
   /api/voice/token:
     post:
       tags: [voice]
@@ -464,8 +608,9 @@ paths:
   /api/voice/rooms:
     get:
       tags: [voice]
-      summary: Listar salas
+      summary: Listar salas de voz
       operationId: listVoiceRooms
+      description: Filtra apenas salas com type=voice.
       responses:
         "200":
           description: Lista de salas de voz
@@ -475,31 +620,6 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Room"
-        "401":
-          description: Não autenticado
-  /ws:
-    get:
-      tags: [rooms]
-      summary: WebSocket de mensagens em tempo real
-      operationId: wsConnect
-      description: |
-        Conexão autenticada por cookie `auth_token` (query `?token=` ainda não suportada — usar cookie).
-
-        Eventos recebidos (cliente → servidor):
-        - `{"type":"join","room_id":"<uuid>"}` — entrar numa sala
-        - `{"type":"message","room_id":"<uuid>","content":"texto"}` — enviar mensagem (1–4000 caracteres)
-
-        Eventos enviados (servidor → cliente):
-        - `{"type":"message","action":"created","id":"<uuid>","room_id":"<uuid>","user_id":"<uuid>","username":"...","content":"...","created_at":"..."}`
-        - `{"type":"message","action":"updated",...}` — mensagem editada
-        - `{"type":"message","action":"deleted","id":"<uuid>","room_id":"<uuid>","user_id":"<uuid>"}`
-        - `{"type":"room","action":"created","id":"<uuid>","name":"...","room_type":"text|voice"}` — sala criada
-        - `{"type":"room","action":"updated","id":"<uuid>","name":"...","room_type":"text|voice"}` — sala editada
-        - `{"type":"room","action":"deleted","id":"<uuid>"}` — sala deletada; conexão WS permanece viva
-        - `{"type":"error","error":"Mensagem deve ter entre 1 e 4000 caracteres"}`
-      responses:
-        "101":
-          description: Upgraded para WebSocket
         "401":
           description: Não autenticado
 components:
@@ -517,7 +637,7 @@ components:
         name: { type: string }
         type: { type: string, enum: [text, voice] }
         created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time, nullable: true }
     Message:
       type: object
       properties:

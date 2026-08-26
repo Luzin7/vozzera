@@ -11,8 +11,9 @@ type revokeRecorder struct {
 	revoked uuid.UUID
 }
 
-func (r *revokeRecorder) Revoke(sessionID uuid.UUID) {
+func (r *revokeRecorder) Revoke(_ context.Context, sessionID uuid.UUID) error {
 	r.revoked = sessionID
+	return nil
 }
 
 func TestLogoutService_Execute(t *testing.T) {

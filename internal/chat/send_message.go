@@ -2,9 +2,13 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -24,14 +28,13 @@ type SendMessageOutput struct {
 	Content   string
 	CreatedAt time.Time
 }
-
 type SendMessageService struct {
-	repo   Repository
-	events RoomBroadcaster
+	repo      Repository
+	publisher realtime.Publisher
 }
 
-func NewSendMessageService(repo Repository, events RoomBroadcaster) *SendMessageService {
-	return &SendMessageService{repo: repo, events: events}
+func NewSendMessageService(repo Repository, publisher realtime.Publisher) *SendMessageService {
+	return &SendMessageService{repo: repo, publisher: publisher}
 }
 
 func (s *SendMessageService) Execute(ctx context.Context, in SendMessageInput) (SendMessageOutput, error) {
@@ -49,16 +52,34 @@ func (s *SendMessageService) Execute(ctx context.Context, in SendMessageInput) (
 		return SendMessageOutput{}, ErrCreateMessage(err)
 	}
 
-	s.events.Broadcast(OutboundEvent{
-		Type:      EventMessage,
-		Action:    MessageCreated,
+	payload := MessagePayload{
 		ID:        msg.ID,
 		RoomID:    msg.RoomID,
 		UserID:    in.UserID,
 		Username:  in.Username,
 		Content:   msg.Content.String,
 		CreatedAt: msg.CreatedAt.Time,
-	})
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Erro ao serializar payload: %v", err)
+	}
+
+	topic := realtime.Topic(fmt.Sprintf("room:%s", msg.RoomID.String()))
+
+	env := realtime.Envelope{
+		V:     1,
+		Type:  EventMessageCreated,
+		Topic: topic,
+		TS:    time.Now(),
+		Data:  payloadBytes,
+	}
+
+	err = s.publisher.Publish(ctx, topic, env)
+	if err != nil {
+		log.Printf("Erro ao publicar mensagem: %v", err)
+	}
 
 	return SendMessageOutput{
 		ID:        msg.ID,

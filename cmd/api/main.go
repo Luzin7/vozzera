@@ -12,6 +12,7 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
 	shareddb "github.com/Luzin7/vozzera-backend/internal/shared/db"
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/Luzin7/vozzera-backend/internal/swagger"
 	"github.com/Luzin7/vozzera-backend/internal/voice"
 )
@@ -43,9 +44,13 @@ func main() {
 	chatQueries := chat.New(pool)
 	voiceQueries := voice.New(pool)
 
-	hub := chat.NewHub()
-	go hub.Run()
+	hub := realtime.NewHub()
+	go hub.Run(context.Background())
+
 	sender := chat.NewSendMessageService(chatQueries, hub)
+
+	chatRouter := chat.NewChatRouter(sender, hub, chat.NewRoomAuthorizer(chatQueries))
+
 	go cleanupExpiredSessions(authQueries)
 	go cleanupExpiredPasswordResetTokens(authQueries)
 
@@ -90,11 +95,16 @@ func main() {
 		Revoker:          hub,
 		AuthMW:           authMw,
 	})
+
 	chat.RegisterHandlers(mux, chat.ChatDeps{
-		Repo:   chatQueries,
-		Hub:    hub,
-		AuthMW: authMw,
+		Repo:           chatQueries,
+		Publisher:      hub,
+		Registerer:     hub,
+		Handler:        chatRouter,
+		AuthMW:         authMw,
+		AllowedOrigins: cfg.CORSOrigins,
 	})
+
 	voice.RegisterHandlers(mux, voice.VoiceDeps{
 		Repo:       voiceQueries,
 		Issuer:     issuer,
@@ -102,15 +112,6 @@ func main() {
 		AuthMW:     authMw,
 	})
 	swagger.RegisterHandlers(mux)
-
-	mux.Handle("GET /ws", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := httpx.UserFromContext(r.Context())
-		if !ok {
-			http.Error(w, "Não autenticado", http.StatusUnauthorized)
-			return
-		}
-		chat.ServeWs(hub, sender, w, r, user.UserID, user.Username, user.SessionID)
-	})))
 
 	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
 

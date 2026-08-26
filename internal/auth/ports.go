@@ -26,7 +26,7 @@ type Repository interface {
 }
 
 type SessionRevoker interface {
-	Revoke(sessionID uuid.UUID)
+	Revoke(ctx context.Context, sessionID uuid.UUID) error
 }
 
 type MailSender interface {

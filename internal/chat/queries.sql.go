@@ -175,6 +175,25 @@ func (q *Queries) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomPa
 	return items, nil
 }
 
+const getRoomByID = `-- name: GetRoomByID :one
+SELECT id, name, type, created_at, updated_at
+FROM rooms
+WHERE id = $1
+`
+
+func (q *Queries) GetRoomByID(ctx context.Context, id uuid.UUID) (Room, error) {
+	row := q.db.QueryRow(ctx, getRoomByID, id)
+	var i Room
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listRooms = `-- name: ListRooms :many
 SELECT id, name, type, created_at, updated_at
 FROM rooms
