@@ -2,8 +2,9 @@ openapi: 3.0.3
 info:
   title: Vozzera API
   description: |
-    API do Vozzera — salas de texto e voz, mensagens e autenticação.
+    API do Vozzera — salas de texto e voz, mensagens, autenticação e presença em tempo real.
     WebSocket em `/api/ws` com protocolo versionado (envelope `v:1`).
+    Presença de voz via LiveKit Cloud com eventos replicados para o WebSocket.
   version: 1.0.0
 servers:
   - url: http://localhost:8080
@@ -18,7 +19,7 @@ tags:
   - name: messages
     description: Mensagens das salas
   - name: voice
-    description: Salas de voz (LiveKit)
+    description: Salas de voz (LiveKit), tokens e webhook de presença
   - name: websocket
     description: Conexão WebSocket para eventos em tempo real
 paths:
@@ -454,7 +455,7 @@ paths:
 
         | type | data | Descrição |
         |------|------|-----------|
-        | `room.subscribe` | `{"room_id":"<uuid>"}` | Assinar tópico de uma sala (`room:<uuid>`). A sala precisa existir e ser do tipo `text`. |
+        | `room.subscribe` | `{"room_id":"<uuid>"}` | Assinar tópico de uma sala (`room:<uuid>`). A sala precisa existir e ser do tipo `text` ou `voice`. Para salas de voz com participantes ativos, o servidor envia automaticamente `voice.presence.snapshot` com a lista de quem está na call. |
         | `room.unsubscribe` | `{"room_id":"<uuid>"}` | Sair do tópico da sala |
         | `typing.start` | `{"room_id":"<uuid>"}` | Indicar que está digitando |
         | `typing.stop` | `{"room_id":"<uuid>"}` | Indicar que parou de digitar |
@@ -567,6 +568,49 @@ paths:
         }
         ```
 
+        ### voice.presence.joined
+        Tópico `room:<uuid>` — participante entrou na sala de voz:
+        ```json
+        {
+          "v":1,
+          "type":"voice.presence.joined",
+          "topic":"room:<uuid>",
+          "ts":"2026-08-27T12:00:00Z",
+          "data":[
+            {"sid":"PA_...","user_id":"<uuid>","username":"joao"},
+            {"sid":"PA_...","user_id":"<uuid>","username":"maria"}
+          ]
+        }
+        ```
+
+        ### voice.presence.left
+        Tópico `room:<uuid>` — participante saiu da sala de voz:
+        ```json
+        {
+          "v":1,
+          "type":"voice.presence.left",
+          "topic":"room:<uuid>",
+          "ts":"2026-08-27T12:00:00Z",
+          "data":[
+            {"sid":"PA_...","user_id":"<uuid>","username":"joao"}
+          ]
+        }
+        ```
+
+        ### voice.presence.snapshot
+        Tópico `room:<uuid>` — estado completo da presença de voz. Enviado automaticamente ao assinar a sala (se houver participantes) e quando a sala encerra no LiveKit (array vazio):
+        ```json
+        {
+          "v":1,
+          "type":"voice.presence.snapshot",
+          "topic":"room:<uuid>",
+          "ts":"2026-08-27T12:00:00Z",
+          "data":[
+            {"sid":"PA_...","user_id":"<uuid>","username":"joao"}
+          ]
+        }
+        ```
+
         ### system.error
         Tópico genérico — erro do servidor (ex: conteúdo inválido)
       responses:
@@ -605,6 +649,21 @@ paths:
           description: Não autenticado
         "404":
           description: Sala não encontrada
+  /api/voice/webhook:
+    post:
+      tags: [voice]
+      summary: Webhook do LiveKit Cloud
+      operationId: voiceWebhook
+      description: |
+        Recebe eventos de presença do LiveKit Cloud (participante entrou/saiu, sala encerrada).
+        Validado pela assinatura HMAC do LiveKit. Não usa cookie de sessão.
+        Os eventos são replicados para os clientes WebSocket conectados.
+      security: []
+      responses:
+        "200":
+          description: Evento processado
+        "400":
+          description: Assinatura inválida ou payload malformado
   /api/voice/rooms:
     get:
       tags: [voice]
