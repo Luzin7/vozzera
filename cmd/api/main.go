@@ -47,9 +47,11 @@ func main() {
 	hub := realtime.NewHub()
 	go hub.Run(context.Background())
 
+	presenceStore := realtime.NewPresenceStore()
+
 	sender := chat.NewSendMessageService(chatQueries, hub)
 
-	chatRouter := chat.NewChatRouter(sender, hub, chat.NewRoomAuthorizer(chatQueries))
+	chatRouter := chat.NewChatRouter(sender, hub, chat.NewRoomAuthorizer(chatQueries), presenceStore)
 
 	go cleanupExpiredSessions(authQueries)
 	go cleanupExpiredPasswordResetTokens(authQueries)
@@ -83,6 +85,7 @@ func main() {
 		"/api/rooms":           {Limit: 120, Window: time.Minute},
 		"/api/rooms/":          {Limit: 120, Window: time.Minute},
 		"/api/voice/rooms":     {Limit: 60, Window: time.Minute},
+		"/api/voice/webhook":   {Limit: 120, Window: time.Minute},
 	})
 
 	auth.RegisterHandlers(mux, auth.AuthDeps{
@@ -110,6 +113,10 @@ func main() {
 		Issuer:     issuer,
 		LiveKitURL: cfg.LiveKitURL,
 		AuthMW:     authMw,
+		ApiKey:     cfg.LiveKitAPIKey,
+		ApiSecret:  cfg.LiveKitAPISecret,
+		Presence:   presenceStore,
+		Publisher:  hub,
 	})
 	swagger.RegisterHandlers(mux)
 

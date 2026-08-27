@@ -14,10 +14,11 @@ type ChatRouter struct {
 	registerer realtime.Registerer
 	publisher  realtime.Publisher
 	authorizer realtime.SubscriptionAuthorizer
+	presence   *realtime.PresenceStore
 }
 
-func NewChatRouter(sender *SendMessageService, hub *realtime.Hub, authorizer realtime.SubscriptionAuthorizer) *ChatRouter {
-	return &ChatRouter{sender: sender, registerer: hub, publisher: hub, authorizer: authorizer}
+func NewChatRouter(sender *SendMessageService, hub *realtime.Hub, authorizer realtime.SubscriptionAuthorizer, presence *realtime.PresenceStore) *ChatRouter {
+	return &ChatRouter{sender: sender, registerer: hub, publisher: hub, authorizer: authorizer, presence: presence}
 }
 
 func (h *ChatRouter) HandleMessage(c *realtime.Client, env realtime.Envelope) error {
@@ -36,6 +37,21 @@ func (h *ChatRouter) HandleMessage(c *realtime.Client, env realtime.Envelope) er
 			}
 		}
 		h.registerer.Subscribe(c, topic)
+
+		if h.presence != nil {
+			data := h.presence.SnapshotJSON(cmd.RoomID)
+			if data != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				h.publisher.Publish(ctx, topic, realtime.Envelope{
+					V:     1,
+					Type:  EventVoicePresenceSnapshot,
+					Topic: topic,
+					TS:    time.Now(),
+					Data:  data,
+				})
+			}
+		}
 
 	case CmdUnsubscribe:
 		var cmd struct {

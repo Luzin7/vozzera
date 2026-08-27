@@ -9,7 +9,7 @@ const (
 	CmdTypingStop  = "typing.stop"
 )
 
-// O que o servidor AVISA QUE ACONTECEU (Events)
+// Eventos emitidos pelo servidor
 const (
 	EventRoomCreated = "room.created"
 	EventRoomUpdated = "room.updated"
@@ -18,6 +18,8 @@ const (
 	EventMessageCreated = "message.created"
 	EventMessageUpdated = "message.updated"
 	EventMessageDeleted = "message.deleted"
+
+	EventVoicePresenceSnapshot = "voice.presence.snapshot"
 
 	EventSystemError = "system.error"
 )
