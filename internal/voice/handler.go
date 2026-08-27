@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 )
 
 type tokenRequest struct {
@@ -18,21 +19,28 @@ type VoiceDeps struct {
 	Issuer     *TokenIssuer
 	LiveKitURL string
 	AuthMW     func(http.Handler) http.Handler
+	ApiKey     string
+	ApiSecret  string
+	Presence   *realtime.PresenceStore
+	Publisher  realtime.Publisher
 }
 
 type Handler struct {
 	token          *TokenService
 	listVoiceRooms *ListVoiceRoomsService
+	webhook        *WebhookHandler
 }
 
 func RegisterHandlers(mux *http.ServeMux, deps VoiceDeps) {
 	h := &Handler{
 		token:          NewTokenService(deps.Repo, deps.Issuer, deps.LiveKitURL),
 		listVoiceRooms: NewListVoiceRoomsService(deps.Repo),
+		webhook:        NewWebhookHandler(deps.ApiKey, deps.ApiSecret, deps.Presence, deps.Publisher),
 	}
 
 	mux.Handle("POST /api/voice/token", deps.AuthMW(http.HandlerFunc(h.handleToken)))
 	mux.Handle("GET /api/voice/rooms", deps.AuthMW(http.HandlerFunc(h.handleListVoiceRooms)))
+	mux.Handle("POST /api/voice/webhook", http.HandlerFunc(h.webhook.Handle))
 }
 
 func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
