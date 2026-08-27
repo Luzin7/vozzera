@@ -23,7 +23,7 @@ func newFakeRegisterer() *fakeRegisterer {
 	}
 }
 
-func (f *fakeRegisterer) Register(c *realtime.Client) {}
+func (f *fakeRegisterer) Register(c *realtime.Client)   {}
 func (f *fakeRegisterer) Unregister(c *realtime.Client) {}
 func (f *fakeRegisterer) Subscribe(c *realtime.Client, topic realtime.Topic) {
 	key := c.UserID.String()

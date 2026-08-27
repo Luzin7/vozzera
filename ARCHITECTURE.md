@@ -1,5 +1,9 @@
 # Vozzera Backend — Arquitetura & Convenções
 
+> Este documento é **convenção e como-fazer**: estrutura de pastas, fluxo do sqlc, regras de
+> import. Para *o que o sistema é, por que é assim e onde ele quebra* — requisitos com número,
+> camada realtime, trilha de escala, ADRs e dívida priorizada — ver `SYSTEM-DESIGN.md`.
+
 ## Go
 
 Linguagem compilada com concorrência nativa via goroutines/channels e stdlib HTTP robusta — sem framework externo. Ideal pro nosso caso: WebSocket hub + REST + voice signaling, tudo no mesmo binário.
@@ -17,8 +21,13 @@ Cada domínio é **auto-contido**: handler, service, queries SQL e código gerad
 
 /internal
   /auth
-    handler.go             # Rotas POST /api/register, /api/login e POST /api/logout
-    service.go             # Hash bcrypt
+    handler.go             # Rotas de register/login/logout/me/recuperação de senha
+    login.go               # Um arquivo por caso de uso: login, register, logout, me,
+    register.go            #   update_email, request_password_reset, reset_password
+    password.go            # HashPassword / CheckPassword (bcrypt)
+    session_authenticator.go  # Valida sessão opaca com expiração deslizante
+    ports.go               # Repository, SessionRevoker, MailSender
+    errors.go              # Um erro nomeado por caso, com status HTTP
     queries.sql            # Arquivo para o sqlc gerar o repositório deste domínio
     db.go                  # (Gerado pelo sqlc — NÃO editar)
     models.go              # (Gerado pelo sqlc — NÃO editar)
@@ -154,7 +163,7 @@ Para usar no código do domínio, basta chamar `auth.New(pool)` ou `chat.New(poo
 
 | Domínio    | Status       | Detalhes |
 |------------|-------------|----------|
-| **Auth**   | Funcional   | `handler.go`: register com invite code + login que cria sessão opaca (cookie HttpOnly, `SESSION_TTL` deslizante) + logout que revoga a sessão e derruba os WS da sessão. `service.go`: HashPassword, CheckPassword. Queries: `CreateUser`, `GetUserByUsername`, `InsertSession`, `GetSessionByID`, `TouchSession`, `DeleteSessionByID`, `DeleteSessionsByUser`, `CleanupExpiredSessions`. |
+| **Auth**   | Funcional   | `handler.go`: register com invite code + login que cria sessão opaca (cookie HttpOnly, `SESSION_TTL` deslizante) + logout que revoga a sessão e derruba os WS da sessão. `password.go`: HashPassword, CheckPassword. Um arquivo por caso de uso, sem service-balde. Queries: `CreateUser`, `GetUserByUsername`, `InsertSession`, `GetSessionByID`, `TouchSession`, `DeleteSessionByID`, `DeleteSessionsByUser`, `CleanupExpiredSessions`. |
 | **Chat**   | Funcional   | `hub.go`: broker pattern com map + channels, singleton injetado pelo `main.go`. `client.go`: readPump/writePump com backpressure handling (ping/pong/deadlines). `handler.go`: ServeWs, `GET/POST /api/rooms`, `GET /api/rooms/{id}/messages`, `PATCH /api/rooms/{id}/messages/{content_id}` (edição com broadcast `message_edited`). Queries: `CreateMessage`, `GetMessagesByRoom`, `ListRooms`, `CreateRoom`, `UpdateMessage`. |
 | **Voice**  | Funcional   | `livekit.go`: `TokenIssuer` assina JWT do LiveKit via `protocol/auth`. `handler.go`: `POST /api/voice/token` (valida sala, exige `type=voice`, assina token) e `GET /api/voice/rooms`. Queries: `GetRoomByID`, `ListVoiceRooms`. |
 | **Shared** | Funcional   | `config.go`: `Load()` com godotenv (`SESSION_TTL`, `SESSION_TOUCH_WINDOW`). `db.go`: `Connect()` retorna `*pgxpool.Pool`. `httpx/`: `Auth()` valida sessão no DB e põe user no context, `UserFromContext()`, `CORS()` (provisório — reflete qualquer origin, ver T2 do roadmap). |
