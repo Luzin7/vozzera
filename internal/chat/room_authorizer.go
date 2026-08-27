@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrNotTextRoom = errors.New("apenas salas de texto podem ser assinadas via websocket")
+var ErrNotTextRoom = errors.New("apenas salas de texto e voz podem ser assinadas via websocket")
 
 type RoomAuthorizer struct {
 	repo Repository
@@ -24,7 +24,7 @@ func (a *RoomAuthorizer) CanSubscribe(ctx context.Context, userID string, topic 
 	if err != nil {
 		return fmt.Errorf("sala não encontrada: %w", err)
 	}
-	if room.Type != "text" {
+	if room.Type != "text" && room.Type != "voice" {
 		return ErrNotTextRoom
 	}
 	return nil

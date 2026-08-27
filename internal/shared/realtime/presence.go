@@ -28,6 +28,11 @@ func (ps *PresenceStore) snapshot(roomID uuid.UUID) []Participant {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
+	return ps.snapshotUnsafe(roomID)
+}
+
+// snapshotUnsafe builds participant slice without locking. Caller must hold at least RLock.
+func (ps *PresenceStore) snapshotUnsafe(roomID uuid.UUID) []Participant {
 	room, exists := ps.rooms[roomID]
 	if !exists {
 		return []Participant{}
@@ -83,7 +88,7 @@ func (ps *PresenceStore) Join(roomID uuid.UUID, participant Participant) []Parti
 
 	ps.rooms[roomID][participant.SID] = participant
 
-	return ps.snapshot(roomID)
+	return ps.snapshotUnsafe(roomID)
 }
 
 func (ps *PresenceStore) Leave(roomID uuid.UUID, sid string) ([]Participant, bool) {
@@ -100,5 +105,5 @@ func (ps *PresenceStore) Leave(roomID uuid.UUID, sid string) ([]Participant, boo
 	}
 	delete(room, sid)
 
-	return ps.snapshot(roomID), true
+	return ps.snapshotUnsafe(roomID), true
 }
