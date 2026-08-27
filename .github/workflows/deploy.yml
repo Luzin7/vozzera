@@ -1,4 +1,4 @@
-name: Build and Push to GHCR
+name: Deploy
 
 on:
   push:
@@ -9,7 +9,27 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Goose
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/pressly/goose/master/install.sh | sh
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Run Migrations on Neon
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "Aplicando migrações com Goose no Neon..."
+          goose -dir sql/migrations postgres "$DATABASE_URL" up
+          echo "Migrações aplicadas com sucesso!"
+
   build-and-push:
+    needs: [migrate]
     runs-on: ubuntu-latest
     permissions:
       contents: read
