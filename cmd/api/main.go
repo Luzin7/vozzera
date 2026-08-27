@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"net/http"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/Luzin7/vozzera-backend/internal/auth"
 	"github.com/Luzin7/vozzera-backend/internal/chat"
@@ -15,6 +12,7 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
 	shareddb "github.com/Luzin7/vozzera-backend/internal/shared/db"
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/Luzin7/vozzera-backend/internal/swagger"
 	"github.com/Luzin7/vozzera-backend/internal/voice"
 )
@@ -46,41 +44,32 @@ func main() {
 	chatQueries := chat.New(pool)
 	voiceQueries := voice.New(pool)
 
-	hub := chat.NewHub()
-	go hub.Run()
+	hub := realtime.NewHub()
+	go hub.Run(context.Background())
+
+	presenceStore := realtime.NewPresenceStore()
+
 	sender := chat.NewSendMessageService(chatQueries, hub)
+
+	chatRouter := chat.NewChatRouter(sender, hub, chat.NewRoomAuthorizer(chatQueries), presenceStore)
+
 	go cleanupExpiredSessions(authQueries)
 	go cleanupExpiredPasswordResetTokens(authQueries)
 
 	mux := http.NewServeMux()
+	sessionAuth := auth.NewSessionAuthenticator(authQueries, cfg.SessionTouchWindow, cfg.SessionTTL)
 
 	authMw := httpx.Auth(func(ctx context.Context, raw string) (httpx.UserClaims, error) {
-		sid, err := uuid.Parse(raw)
-		if err != nil {
-			return httpx.UserClaims{}, errors.New("cookie de sessão inválido")
-		}
-
-		session, err := authQueries.GetSessionByID(ctx, sid)
+		session, err := sessionAuth.AuthenticateSession(ctx, raw)
 		if err != nil {
 			return httpx.UserClaims{}, err
-		}
-
-		if time.Now().After(session.ExpiresAt) {
-			return httpx.UserClaims{}, errors.New("sessão expirada")
-		}
-
-		if time.Until(session.ExpiresAt) < cfg.SessionTouchWindow {
-			_ = authQueries.TouchSession(ctx, auth.TouchSessionParams{
-				ID:        sid,
-				ExpiresAt: time.Now().Add(cfg.SessionTTL),
-			})
 		}
 
 		return httpx.UserClaims{
 			UserID:    session.UserID,
 			Username:  session.Username,
 			Role:      session.Role,
-			SessionID: sid,
+			SessionID: session.ID,
 		}, nil
 	})
 
@@ -96,6 +85,7 @@ func main() {
 		"/api/rooms":           {Limit: 120, Window: time.Minute},
 		"/api/rooms/":          {Limit: 120, Window: time.Minute},
 		"/api/voice/rooms":     {Limit: 60, Window: time.Minute},
+		"/api/voice/webhook":   {Limit: 120, Window: time.Minute},
 	})
 
 	auth.RegisterHandlers(mux, auth.AuthDeps{
@@ -108,27 +98,27 @@ func main() {
 		Revoker:          hub,
 		AuthMW:           authMw,
 	})
+
 	chat.RegisterHandlers(mux, chat.ChatDeps{
-		Repo:   chatQueries,
-		Hub:    hub,
-		AuthMW: authMw,
+		Repo:           chatQueries,
+		Publisher:      hub,
+		Registerer:     hub,
+		Handler:        chatRouter,
+		AuthMW:         authMw,
+		AllowedOrigins: cfg.CORSOrigins,
 	})
+
 	voice.RegisterHandlers(mux, voice.VoiceDeps{
 		Repo:       voiceQueries,
 		Issuer:     issuer,
 		LiveKitURL: cfg.LiveKitURL,
 		AuthMW:     authMw,
+		ApiKey:     cfg.LiveKitAPIKey,
+		ApiSecret:  cfg.LiveKitAPISecret,
+		Presence:   presenceStore,
+		Publisher:  hub,
 	})
 	swagger.RegisterHandlers(mux)
-
-	mux.Handle("GET /ws", authMw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := httpx.UserFromContext(r.Context())
-		if !ok {
-			http.Error(w, "Não autenticado", http.StatusUnauthorized)
-			return
-		}
-		chat.ServeWs(hub, sender, w, r, user.UserID, user.Username, user.SessionID)
-	})))
 
 	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
 

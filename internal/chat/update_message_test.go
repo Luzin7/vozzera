@@ -15,7 +15,7 @@ func TestUpdateMessageService_Execute(t *testing.T) {
 		return UpdateMessageRow{}, pgx.ErrNoRows
 	}
 
-	events := &fakeBroadcaster{}
+	events := &fakePublisher{}
 	svc := NewUpdateMessageService(repo, events)
 
 	t.Run("mensagem alheia ou inexistente", func(t *testing.T) {

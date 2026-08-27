@@ -1,6 +1,13 @@
 package chat
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
+)
 
 type CreateRoomInput struct {
 	Name  string
@@ -13,12 +20,12 @@ type CreateRoomOutput struct {
 }
 
 type CreateRoomService struct {
-	repo   Repository
-	events RoomBroadcaster
+	repo      Repository
+	publisher realtime.Publisher
 }
 
-func NewCreateRoomService(repo Repository, events RoomBroadcaster) *CreateRoomService {
-	return &CreateRoomService{repo: repo, events: events}
+func NewCreateRoomService(repo Repository, publisher realtime.Publisher) *CreateRoomService {
+	return &CreateRoomService{repo: repo, publisher: publisher}
 }
 
 func (s *CreateRoomService) Execute(ctx context.Context, in CreateRoomInput) (CreateRoomOutput, error) {
@@ -41,13 +48,28 @@ func (s *CreateRoomService) Execute(ctx context.Context, in CreateRoomInput) (Cr
 		return CreateRoomOutput{}, ErrCreateRoom(err)
 	}
 
-	s.events.Broadcast(OutboundEvent{
-		Type:     EventRoom,
-		Action:   RoomCreated,
-		ID:       room.ID,
-		RoomName: room.Name,
-		RoomType: room.Type,
-	})
+	payload := RoomPayload{
+		ID:        room.ID,
+		Name:      room.Name,
+		Type:      room.Type,
+		CreatedAt: room.CreatedAt.Time,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return CreateRoomOutput{}, fmt.Errorf("failed to marshal room payload: %w", err)
+	}
+
+	topic := realtime.Topic("app:rooms")
+
+	env := realtime.Envelope{
+		V:     1,
+		Type:  EventRoomCreated,
+		Topic: topic,
+		TS:    time.Now(),
+		Data:  payloadBytes,
+	}
+
+	s.publisher.Publish(ctx, topic, env)
 
 	return CreateRoomOutput{Room: room}, nil
 }

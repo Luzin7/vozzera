@@ -1,20 +1,20 @@
 package chat
 
 import (
-	"github.com/google/uuid"
+	"context"
+
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 )
 
-type fakeBroadcaster struct {
-	events []OutboundEvent
-	closed []uuid.UUID
+type fakePublisher struct {
+	envelopes []realtime.Envelope
+	topics    []realtime.Topic
 }
 
-func (f *fakeBroadcaster) Broadcast(event OutboundEvent) {
-	f.events = append(f.events, event)
+func (f *fakePublisher) Publish(_ context.Context, topic realtime.Topic, env realtime.Envelope) error {
+	f.topics = append(f.topics, topic)
+	f.envelopes = append(f.envelopes, env)
+	return nil
 }
 
-func (f *fakeBroadcaster) CloseRoom(roomID uuid.UUID) {
-	f.closed = append(f.closed, roomID)
-}
-
-var _ RoomBroadcaster = (*fakeBroadcaster)(nil)
+var _ realtime.Publisher = (*fakePublisher)(nil)

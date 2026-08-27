@@ -2,8 +2,12 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -19,12 +23,12 @@ type UpdateRoomOutput struct {
 }
 
 type UpdateRoomService struct {
-	repo   Repository
-	events RoomBroadcaster
+	repo      Repository
+	publisher realtime.Publisher
 }
 
-func NewUpdateRoomService(repo Repository, events RoomBroadcaster) *UpdateRoomService {
-	return &UpdateRoomService{repo: repo, events: events}
+func NewUpdateRoomService(repo Repository, publisher realtime.Publisher) *UpdateRoomService {
+	return &UpdateRoomService{repo: repo, publisher: publisher}
 }
 
 func (s *UpdateRoomService) Execute(ctx context.Context, in UpdateRoomInput) (UpdateRoomOutput, error) {
@@ -47,13 +51,31 @@ func (s *UpdateRoomService) Execute(ctx context.Context, in UpdateRoomInput) (Up
 		return UpdateRoomOutput{}, ErrUpdateRoom(err)
 	}
 
-	s.events.Broadcast(OutboundEvent{
-		Type:     EventRoom,
-		Action:   RoomUpdated,
-		ID:       room.ID,
-		RoomName: room.Name,
-		RoomType: room.Type,
-	})
+	payload := RoomPayload{
+		ID:        room.ID,
+		Name:      room.Name,
+		Type:      room.Type,
+		CreatedAt: room.CreatedAt.Time,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return UpdateRoomOutput{}, ErrUpdateRoom(err)
+	}
+
+	topic := realtime.Topic(fmt.Sprintf("room:%s", room.ID.String()))
+
+	env := realtime.Envelope{
+		V:     1,
+		Type:  EventRoomUpdated,
+		Topic: topic,
+		TS:    time.Now(),
+		Data:  payloadBytes,
+	}
+
+	err = s.publisher.Publish(ctx, topic, env)
+	if err != nil {
+		return UpdateRoomOutput{}, ErrUpdateRoom(err)
+	}
 
 	return UpdateRoomOutput{Room: room}, nil
 }

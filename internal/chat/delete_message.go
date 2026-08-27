@@ -2,8 +2,12 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"time"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -20,12 +24,12 @@ type DeleteMessageOutput struct {
 }
 
 type DeleteMessageService struct {
-	repo   Repository
-	events RoomBroadcaster
+	repo      Repository
+	publisher realtime.Publisher
 }
 
-func NewDeleteMessageService(repo Repository, events RoomBroadcaster) *DeleteMessageService {
-	return &DeleteMessageService{repo: repo, events: events}
+func NewDeleteMessageService(repo Repository, publisher realtime.Publisher) *DeleteMessageService {
+	return &DeleteMessageService{repo: repo, publisher: publisher}
 }
 
 func (s *DeleteMessageService) Execute(ctx context.Context, in DeleteMessageInput) (DeleteMessageOutput, error) {
@@ -41,13 +45,29 @@ func (s *DeleteMessageService) Execute(ctx context.Context, in DeleteMessageInpu
 		return DeleteMessageOutput{}, ErrDeleteMessage(err)
 	}
 
-	s.events.Broadcast(OutboundEvent{
-		Type:   EventMessage,
-		Action: MessageDeleted,
-		ID:     msg.ID,
-		RoomID: in.RoomID,
-		UserID: in.UserID,
+	payload := MessageDeletedPayload{
+		ContentID: msg.ID,
+		RoomID:    msg.RoomID,
+		UserID:    msg.UserID,
+		IsMod:     in.IsMod,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return DeleteMessageOutput{}, ErrDeleteMessage(err)
+	}
+
+	topic := realtime.Topic(fmt.Sprintf("room:%s", msg.RoomID.String()))
+
+	err = s.publisher.Publish(ctx, topic, realtime.Envelope{
+		V:     1,
+		Type:  EventMessageDeleted,
+		Topic: topic,
+		TS:    time.Now(),
+		Data:  payloadBytes,
 	})
+	if err != nil {
+		return DeleteMessageOutput{}, ErrDeleteMessage(err)
+	}
 
 	return DeleteMessageOutput{Message: msg}, nil
 }

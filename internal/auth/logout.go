@@ -24,6 +24,8 @@ func (s *LogoutService) Execute(ctx context.Context, in LogoutInput) error {
 		return ErrRevokeSession(err)
 	}
 
-	s.revoker.Revoke(in.SessionID)
+	if err := s.revoker.Revoke(ctx, in.SessionID); err != nil {
+		return ErrRevokeSession(err)
+	}
 	return nil
 }

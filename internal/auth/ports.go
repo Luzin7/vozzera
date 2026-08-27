@@ -21,10 +21,12 @@ type Repository interface {
 	GetPasswordResetTokenByHash(ctx context.Context, tokenHash string) (GetPasswordResetTokenByHashRow, error)
 	DeletePasswordResetToken(ctx context.Context, id uuid.UUID) error
 	CleanupExpiredPasswordResetTokens(ctx context.Context) error
+	GetSessionByID(ctx context.Context, id uuid.UUID) (GetSessionByIDRow, error)
+	TouchSession(ctx context.Context, arg TouchSessionParams) error
 }
 
 type SessionRevoker interface {
-	Revoke(sessionID uuid.UUID)
+	Revoke(ctx context.Context, sessionID uuid.UUID) error
 }
 
 type MailSender interface {

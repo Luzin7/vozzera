@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestCreateRoomService_Execute(t *testing.T) {
 		return Room{ID: uuid.New(), Name: arg.Name, Type: arg.Type}, nil
 	}
 
-	events := &fakeBroadcaster{}
+	events := &fakePublisher{}
 	svc := NewCreateRoomService(repo, events)
 
 	t.Run("sem permissão", func(t *testing.T) {
@@ -40,11 +41,19 @@ func TestCreateRoomService_Execute(t *testing.T) {
 			t.Errorf("name = %q, want %q", out.Room.Name, "sala")
 		}
 
-		if len(events.events) != 1 {
-			t.Fatalf("events = %d, want 1", len(events.events))
+		if len(events.envelopes) != 1 {
+			t.Fatalf("envelopes = %d, want 1", len(events.envelopes))
 		}
-		if events.events[0].Action != RoomCreated {
-			t.Errorf("action = %q, want %q", events.events[0].Action, RoomCreated)
+		env := events.envelopes[0]
+		if env.Type != EventRoomCreated {
+			t.Errorf("type = %q, want %q", env.Type, EventRoomCreated)
+		}
+		var payload RoomPayload
+		if err := json.Unmarshal(env.Data, &payload); err != nil {
+			t.Fatalf("Unmarshal payload: %v", err)
+		}
+		if payload.Name != "sala" {
+			t.Errorf("name = %q, want %q", payload.Name, "sala")
 		}
 	})
 }
