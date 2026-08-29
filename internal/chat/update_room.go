@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
@@ -62,7 +61,7 @@ func (s *UpdateRoomService) Execute(ctx context.Context, in UpdateRoomInput) (Up
 		return UpdateRoomOutput{}, ErrUpdateRoom(err)
 	}
 
-	topic := realtime.Topic(fmt.Sprintf("room:%s", room.ID.String()))
+	topic := realtime.Topic("app:rooms")
 
 	env := realtime.Envelope{
 		V:     1,
