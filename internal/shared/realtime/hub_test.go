@@ -12,13 +12,12 @@ func TestHub_Register(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go hub.Run(ctx)
+	go hub.Run()
 
 	client := NewClient(hub, nil, uuid.New(), "usuário-teste", uuid.New(), nil)
 	client.Topics = make(map[Topic]bool)
 
 	hub.Register(client)
-	// espera a goroutine do hub processar o registro
 	hub.Publish(ctx, Topic("__sync__"), Envelope{})
 	<-time.After(time.Millisecond)
 
@@ -31,7 +30,7 @@ func TestHub_Unregister(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go hub.Run(ctx)
+	go hub.Run()
 
 	client := NewClient(hub, nil, uuid.New(), "usuário-teste", uuid.New(), nil)
 	client.Topics = make(map[Topic]bool)
@@ -53,7 +52,7 @@ func TestHub_SubscribeEPublish(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go hub.Run(ctx)
+	go hub.Run()
 
 	client := NewClient(hub, nil, uuid.New(), "usuário-teste", uuid.New(), nil)
 	client.Topics = make(map[Topic]bool)
@@ -94,7 +93,7 @@ func TestHub_RevokeRemoveClienteDaSessionID(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go hub.Run(ctx)
+	go hub.Run()
 
 	sessionID := uuid.New()
 	client1 := NewClient(hub, nil, uuid.New(), "alice", sessionID, nil)

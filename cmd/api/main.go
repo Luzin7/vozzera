@@ -2,8 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/auth"
@@ -20,6 +25,9 @@ import (
 func main() {
 	cfg := config.Load()
 
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	var mailer auth.MailSender
 	m, err := sendgrid.NewSendGridMailer(sendgrid.Config{
 		APIKey:      cfg.SendGridConfig.APIKey,
@@ -33,28 +41,39 @@ func main() {
 		mailer = m
 	}
 
-	ctx := context.Background()
-	pool, err := shareddb.Connect(ctx, cfg.DatabaseURL)
+	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer initCancel()
+
+	pool, err := shareddb.Connect(initCtx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("Erro ao conectar no banco: %v", err)
 	}
-	defer pool.Close()
+	defer func() {
+		log.Println("Encerrando pool de conexões com o banco...")
+		pool.Close()
+	}()
 
 	authQueries := auth.New(pool)
 	chatQueries := chat.New(pool)
 	voiceQueries := voice.New(pool)
 
 	hub := realtime.NewHub()
-	go hub.Run(context.Background())
+	go hub.Run()
 
 	voicePresence := realtime.NewVoiceRoomPresence()
-
 	sender := chat.NewSendMessageService(chatQueries, hub)
-
 	chatRouter := chat.NewChatRouter(sender, hub, chat.NewRoomAuthorizer(chatQueries), voicePresence)
 
-	go cleanupExpiredSessions(authQueries)
-	go cleanupExpiredPasswordResetTokens(authQueries)
+	var bgWg sync.WaitGroup
+	bgWg.Add(2)
+	go func() {
+		defer bgWg.Done()
+		cleanupExpiredSessions(rootCtx, authQueries)
+	}()
+	go func() {
+		defer bgWg.Done()
+		cleanupExpiredPasswordResetTokens(rootCtx, authQueries)
+	}()
 
 	mux := http.NewServeMux()
 	sessionAuth := auth.NewSessionAuthenticator(authQueries, cfg.SessionTouchWindow, cfg.SessionTTL)
@@ -121,33 +140,72 @@ func main() {
 	swagger.RegisterHandlers(mux)
 
 	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
-
-	log.Printf("Servidor rodando na porta :%s", cfg.Port)
-
 	finalHandler := httpx.Logger(handler)
-	if err := http.ListenAndServe(":"+cfg.Port, finalHandler); err != nil {
-		log.Fatal(err)
+
+	server := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           finalHandler,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf("Servidor rodando na porta :%s", cfg.Port)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+
+	select {
+	case <-rootCtx.Done():
+		log.Println("Sinal de encerramento recebido. Iniciando graceful shutdown...")
+	case err := <-serverErr:
+		log.Fatalf("Erro fatal ao iniciar servidor HTTP: %v", err)
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Erro durante HTTP Server Shutdown: %v", err)
+	}
+
+	if err := hub.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Erro durante drenagem do Hub de WebSockets: %v", err)
+	}
+
+	bgWg.Wait()
+	log.Println("Processo finalizado com sucesso.")
 }
 
-func cleanupExpiredSessions(queries *auth.Queries) {
+func cleanupExpiredSessions(ctx context.Context, queries *auth.Queries) {
 	ticker := time.NewTicker(time.Hour * 24)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		if err := queries.CleanupExpiredSessions(context.Background()); err != nil {
-			log.Printf("erro ao limpar sessões expiradas: %v", err)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := queries.CleanupExpiredSessions(context.Background()); err != nil {
+				log.Printf("erro ao limpar sessões expiradas: %v", err)
+			}
 		}
 	}
 }
 
-func cleanupExpiredPasswordResetTokens(queries *auth.Queries) {
+func cleanupExpiredPasswordResetTokens(ctx context.Context, queries *auth.Queries) {
 	ticker := time.NewTicker(time.Hour * 24)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		if err := queries.CleanupExpiredPasswordResetTokens(context.Background()); err != nil {
-			log.Printf("erro ao limpar tokens de recuperação expirados: %v", err)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := queries.CleanupExpiredPasswordResetTokens(context.Background()); err != nil {
+				log.Printf("erro ao limpar tokens de recuperação expirados: %v", err)
+			}
 		}
 	}
 }
