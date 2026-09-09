@@ -19,7 +19,5 @@ const (
 	EventMessageUpdated = "message.updated"
 	EventMessageDeleted = "message.deleted"
 
-	EventVoicePresenceSnapshot = "voice.presence.snapshot"
-
 	EventSystemError = "system.error"
 )
