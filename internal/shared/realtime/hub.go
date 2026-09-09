@@ -28,6 +28,7 @@ type Hub struct {
 	subscribe   chan subscription
 	unsubscribe chan subscription
 	revoke      chan uuid.UUID
+	sync        chan struct{}
 	stop        chan struct{}
 	done        chan struct{}
 }
@@ -36,12 +37,13 @@ func NewHub() *Hub {
 	return &Hub{
 		clients:     make(map[*Client]bool),
 		topics:      make(map[Topic]map[*Client]bool),
-		broadcast:   make(chan broadcastPayload),
+		broadcast:   make(chan broadcastPayload, 256),
 		register:    make(chan *Client),
 		unregister:  make(chan *Client),
 		subscribe:   make(chan subscription),
 		unsubscribe: make(chan subscription),
 		revoke:      make(chan uuid.UUID),
+		sync:        make(chan struct{}),
 		stop:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
@@ -118,6 +120,26 @@ func (h *Hub) Unregister(c *Client) {
 func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
 	select {
 	case h.revoke <- sessionID:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
+	}
+}
+
+// Sync bloqueia até a goroutine do Run() processar todos os comandos pendentes.
+func (h *Hub) Sync(ctx context.Context) error {
+	select {
+	case h.sync <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
+	}
+
+	select {
+	case <-h.sync:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -215,6 +237,9 @@ func (h *Hub) Run() {
 					h.removeClient(client)
 				}
 			}
+
+		case <-h.sync:
+			h.sync <- struct{}{}
 		}
 	}
 }
