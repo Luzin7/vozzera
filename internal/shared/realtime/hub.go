@@ -3,7 +3,8 @@ package realtime
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,25 +34,48 @@ type Hub struct {
 	clients     map[*Client]bool
 	onlineUsers map[uuid.UUID]*onlineUser
 	topics      map[Topic]map[*Client]bool
+
+	presenceMu sync.RWMutex
+
 	broadcast   chan broadcastPayload
 	register    chan *Client
 	unregister  chan *Client
 	subscribe   chan subscription
 	unsubscribe chan subscription
 	revoke      chan uuid.UUID
+
+	stop chan struct{}
+	done chan struct{}
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		broadcast:   make(chan broadcastPayload),
-		register:    make(chan *Client),
-		unregister:  make(chan *Client),
 		clients:     make(map[*Client]bool),
 		onlineUsers: make(map[uuid.UUID]*onlineUser),
 		topics:      make(map[Topic]map[*Client]bool),
+		broadcast:   make(chan broadcastPayload),
+		register:    make(chan *Client),
+		unregister:  make(chan *Client),
 		subscribe:   make(chan subscription),
 		unsubscribe: make(chan subscription),
 		revoke:      make(chan uuid.UUID),
+		stop:        make(chan struct{}),
+		done:        make(chan struct{}),
+	}
+}
+
+func (h *Hub) Shutdown(ctx context.Context) error {
+	select {
+	case <-h.stop:
+	default:
+		close(h.stop)
+	}
+
+	select {
+	case <-h.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -71,10 +95,15 @@ func (h *Hub) Publish(ctx context.Context, topic Topic, env Envelope) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
 	}
 }
 
 func (h *Hub) OnlineUsers() []UserPresence {
+	h.presenceMu.RLock()
+	defer h.presenceMu.RUnlock()
+
 	users := make([]UserPresence, 0, len(h.onlineUsers))
 	for id, u := range h.onlineUsers {
 		users = append(users, UserPresence{
@@ -86,24 +115,42 @@ func (h *Hub) OnlineUsers() []UserPresence {
 }
 
 func (h *Hub) Subscribe(c *Client, topic Topic) {
-	h.subscribe <- subscription{client: c, topic: topic}
+	select {
+	case h.subscribe <- subscription{client: c, topic: topic}:
+	case <-h.done:
+	}
 }
 
 func (h *Hub) Unsubscribe(c *Client, topic Topic) {
-	h.unsubscribe <- subscription{client: c, topic: topic}
+	select {
+	case h.unsubscribe <- subscription{client: c, topic: topic}:
+	case <-h.done:
+	}
 }
 
 func (h *Hub) Register(c *Client) {
-	h.register <- c
+	select {
+	case h.register <- c:
+	case <-h.done:
+	}
 }
 
 func (h *Hub) Unregister(c *Client) {
-	h.unregister <- c
+	select {
+	case h.unregister <- c:
+	case <-h.done:
+	}
 }
 
 func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
-	h.revoke <- sessionID
-	return nil
+	select {
+	case h.revoke <- sessionID:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
+	}
 }
 
 func (h *Hub) broadcastPresence(env Envelope) {
@@ -115,12 +162,12 @@ func (h *Hub) broadcastPresence(env Envelope) {
 		select {
 		case client.send <- data:
 		default:
-			h.RemoveClient(client)
+			h.removeClient(client, true)
 		}
 	}
 }
 
-func (h *Hub) RemoveClient(c *Client) {
+func (h *Hub) removeClient(c *Client, notifyPresence bool) {
 	if _, ok := h.clients[c]; !ok {
 		return
 	}
@@ -138,14 +185,17 @@ func (h *Hub) RemoveClient(c *Client) {
 	}
 	c.Topics = make(map[Topic]bool)
 
+	h.presenceMu.Lock()
 	u, ok := h.onlineUsers[c.UserID]
-	if !ok {
-		return
+	if ok {
+		u.Connections--
+		if u.Connections <= 0 {
+			delete(h.onlineUsers, c.UserID)
+		}
 	}
-	u.Connections--
-	if u.Connections == 0 {
-		delete(h.onlineUsers, c.UserID)
+	h.presenceMu.Unlock()
 
+	if ok && u.Connections <= 0 && notifyPresence {
 		data, _ := json.Marshal(map[string]interface{}{
 			"user_id":  c.UserID,
 			"username": u.Username,
@@ -160,16 +210,25 @@ func (h *Hub) RemoveClient(c *Client) {
 	}
 }
 
-func (h *Hub) Run(ctx context.Context) {
+func (h *Hub) drain() {
+	for client := range h.clients {
+		h.removeClient(client, false)
+	}
+}
+
+func (h *Hub) Run() {
+	defer close(h.done)
+
 	for {
 		select {
-		case <-ctx.Done():
-			log.Println("Hub encerrado")
+		case <-h.stop:
+			h.drain()
 			return
 
 		case client := <-h.register:
 			h.clients[client] = true
 
+			h.presenceMu.Lock()
 			u, exists := h.onlineUsers[client.UserID]
 			if !exists {
 				u = &onlineUser{Username: client.Username}
@@ -178,8 +237,10 @@ func (h *Hub) Run(ctx context.Context) {
 				u.Username = client.Username
 			}
 			u.Connections++
+			isFirstConn := u.Connections == 1
+			h.presenceMu.Unlock()
 
-			if u.Connections == 1 {
+			if isFirstConn {
 				data, _ := json.Marshal(map[string]interface{}{
 					"user_id":  client.UserID,
 					"username": u.Username,
@@ -194,12 +255,12 @@ func (h *Hub) Run(ctx context.Context) {
 			}
 
 		case client := <-h.unregister:
-			h.RemoveClient(client)
+			h.removeClient(client, true)
 
 		case sessionID := <-h.revoke:
 			for client := range h.clients {
 				if client.SessionID == sessionID {
-					h.RemoveClient(client)
+					h.removeClient(client, true)
 				}
 			}
 
@@ -221,12 +282,11 @@ func (h *Hub) Run(ctx context.Context) {
 
 		case payload := <-h.broadcast:
 			clients := h.topics[payload.topic]
-
 			for client := range clients {
 				select {
 				case client.send <- payload.data:
 				default:
-					h.RemoveClient(client)
+					h.removeClient(client, true)
 				}
 			}
 		}
