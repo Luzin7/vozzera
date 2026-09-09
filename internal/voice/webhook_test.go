@@ -45,7 +45,7 @@ func TestParticipantFromEvent(t *testing.T) {
 }
 
 func TestNewWebhookHandler(t *testing.T) {
-	presence := realtime.NewPresenceStore()
+	presence := NewVoiceRoomPresence()
 	publisher := &voiceFakePublisher{}
 	handler := NewWebhookHandler("api-key", "api-secret", presence, publisher)
 
@@ -61,7 +61,7 @@ func TestNewWebhookHandler(t *testing.T) {
 }
 
 func TestWebhookHandler_Handle_EventoDesconhecido(t *testing.T) {
-	presence := realtime.NewPresenceStore()
+	presence := NewVoiceRoomPresence()
 	publisher := &voiceFakePublisher{}
 	handler := NewWebhookHandler("test-key", "test-secret", presence, publisher)
 
@@ -86,7 +86,7 @@ func TestWebhookHandler_Handle_EventoDesconhecido(t *testing.T) {
 }
 
 func TestWebhookHandler_Handle_PayloadMalFormado(t *testing.T) {
-	presence := realtime.NewPresenceStore()
+	presence := NewVoiceRoomPresence()
 	publisher := &voiceFakePublisher{}
 	handler := NewWebhookHandler("test-key", "test-secret", presence, publisher)
 

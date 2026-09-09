@@ -12,15 +12,13 @@ func TestHub_Register(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go hub.Run(ctx)
+	go hub.Run()
 
 	client := NewClient(hub, nil, uuid.New(), "usuário-teste", uuid.New(), nil)
 	client.Topics = make(map[Topic]bool)
 
 	hub.Register(client)
-	// espera a goroutine do hub processar o registro
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	if !hub.clients[client] {
 		t.Error("cliente não registrado")
@@ -31,14 +29,13 @@ func TestHub_Unregister(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go hub.Run(ctx)
+	go hub.Run()
 
 	client := NewClient(hub, nil, uuid.New(), "usuário-teste", uuid.New(), nil)
 	client.Topics = make(map[Topic]bool)
 
 	hub.Register(client)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	hub.Unregister(client)
 
@@ -53,19 +50,17 @@ func TestHub_SubscribeEPublish(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go hub.Run(ctx)
+	go hub.Run()
 
 	client := NewClient(hub, nil, uuid.New(), "usuário-teste", uuid.New(), nil)
 	client.Topics = make(map[Topic]bool)
 	topic := Topic("room:" + uuid.New().String())
 
 	hub.Register(client)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	hub.Subscribe(client, topic)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	if !hub.topics[topic][client] {
 		t.Error("cliente não inscrito no tópico")
@@ -94,7 +89,7 @@ func TestHub_RevokeRemoveClienteDaSessionID(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go hub.Run(ctx)
+	go hub.Run()
 
 	sessionID := uuid.New()
 	client1 := NewClient(hub, nil, uuid.New(), "alice", sessionID, nil)
@@ -104,12 +99,10 @@ func TestHub_RevokeRemoveClienteDaSessionID(t *testing.T) {
 
 	hub.Register(client1)
 	hub.Register(client2)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	hub.Revoke(ctx, sessionID)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	if hub.clients[client1] {
 		t.Error("client1 não deveria estar registrado após revoke")

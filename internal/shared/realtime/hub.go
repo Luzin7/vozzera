@@ -3,7 +3,7 @@ package realtime
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"errors"
 
 	"github.com/google/uuid"
 )
@@ -21,24 +21,50 @@ type broadcastPayload struct {
 type Hub struct {
 	clients     map[*Client]bool
 	topics      map[Topic]map[*Client]bool
+	presence    PresenceHook
 	broadcast   chan broadcastPayload
 	register    chan *Client
 	unregister  chan *Client
 	subscribe   chan subscription
 	unsubscribe chan subscription
 	revoke      chan uuid.UUID
+	sync        chan struct{}
+	stop        chan struct{}
+	done        chan struct{}
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		broadcast:   make(chan broadcastPayload),
-		register:    make(chan *Client),
-		unregister:  make(chan *Client),
 		clients:     make(map[*Client]bool),
 		topics:      make(map[Topic]map[*Client]bool),
+		broadcast:   make(chan broadcastPayload, 256),
+		register:    make(chan *Client),
+		unregister:  make(chan *Client),
 		subscribe:   make(chan subscription),
 		unsubscribe: make(chan subscription),
 		revoke:      make(chan uuid.UUID),
+		sync:        make(chan struct{}),
+		stop:        make(chan struct{}),
+		done:        make(chan struct{}),
+	}
+}
+
+func (h *Hub) SetPresence(p PresenceHook) {
+	h.presence = p
+}
+
+func (h *Hub) Shutdown(ctx context.Context) error {
+	select {
+	case <-h.stop:
+	default:
+		close(h.stop)
+	}
+
+	select {
+	case <-h.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -58,64 +84,121 @@ func (h *Hub) Publish(ctx context.Context, topic Topic, env Envelope) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
 	}
 }
 
 func (h *Hub) Subscribe(c *Client, topic Topic) {
-	h.subscribe <- subscription{client: c, topic: topic}
-}
-
-func (h *Hub) Unsubscribe(c *Client, topic Topic) {
-	h.unsubscribe <- subscription{client: c, topic: topic}
-}
-
-func (h *Hub) Register(c *Client) {
-	h.register <- c
-}
-
-func (h *Hub) Unregister(c *Client) {
-	h.unregister <- c
-}
-
-func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
-	h.revoke <- sessionID
-	return nil
-}
-
-func (h *Hub) RemoveClient(c *Client) {
-	if _, ok := h.clients[c]; ok {
-		delete(h.clients, c)
-		close(c.send)
-
-		for topic := range c.Topics {
-			if clients, ok := h.topics[topic]; ok {
-				delete(clients, c)
-				if len(clients) == 0 {
-					delete(h.topics, topic)
-				}
-			}
-		}
-		c.Topics = make(map[Topic]bool)
+	select {
+	case h.subscribe <- subscription{client: c, topic: topic}:
+	case <-h.done:
 	}
 }
 
-func (h *Hub) Run(ctx context.Context) {
+func (h *Hub) Unsubscribe(c *Client, topic Topic) {
+	select {
+	case h.unsubscribe <- subscription{client: c, topic: topic}:
+	case <-h.done:
+	}
+}
+
+func (h *Hub) Register(c *Client) {
+	select {
+	case h.register <- c:
+	case <-h.done:
+	}
+}
+
+func (h *Hub) Unregister(c *Client) {
+	select {
+	case h.unregister <- c:
+	case <-h.done:
+	}
+}
+
+func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
+	select {
+	case h.revoke <- sessionID:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
+	}
+}
+
+// Sync bloqueia até a goroutine do Run() processar todos os comandos pendentes.
+func (h *Hub) Sync(ctx context.Context) error {
+	select {
+	case h.sync <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
+	}
+
+	select {
+	case <-h.sync:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
+	}
+}
+
+func (h *Hub) removeClient(c *Client) {
+	if _, ok := h.clients[c]; !ok {
+		return
+	}
+
+	delete(h.clients, c)
+	close(c.send)
+
+	for topic := range c.Topics {
+		if clients, ok := h.topics[topic]; ok {
+			delete(clients, c)
+			if len(clients) == 0 {
+				delete(h.topics, topic)
+			}
+		}
+	}
+	c.Topics = make(map[Topic]bool)
+
+	if h.presence != nil {
+		h.presence.HandleClientDisconnected(c.UserID, c.Username)
+	}
+}
+
+func (h *Hub) drain() {
+	for client := range h.clients {
+		h.removeClient(client)
+	}
+}
+
+func (h *Hub) Run() {
+	defer close(h.done)
+
 	for {
 		select {
-		case <-ctx.Done():
-			log.Println("Hub encerrado")
+		case <-h.stop:
+			h.drain()
 			return
 
 		case client := <-h.register:
 			h.clients[client] = true
+			if h.presence != nil {
+				h.presence.HandleClientConnected(client.UserID, client.Username)
+			}
 
 		case client := <-h.unregister:
-			h.RemoveClient(client)
+			h.removeClient(client)
 
 		case sessionID := <-h.revoke:
 			for client := range h.clients {
 				if client.SessionID == sessionID {
-					h.RemoveClient(client)
+					h.removeClient(client)
 				}
 			}
 
@@ -125,6 +208,16 @@ func (h *Hub) Run(ctx context.Context) {
 			}
 			h.topics[sub.topic][sub.client] = true
 			sub.client.Topics[sub.topic] = true
+			if h.presence != nil {
+				data := h.presence.HandleTopicSubscribed(sub.topic)
+				if data != nil {
+					select {
+					case sub.client.send <- data:
+					default:
+						h.removeClient(sub.client)
+					}
+				}
+			}
 
 		case unsub := <-h.unsubscribe:
 			if clients, ok := h.topics[unsub.topic]; ok {
@@ -137,14 +230,16 @@ func (h *Hub) Run(ctx context.Context) {
 
 		case payload := <-h.broadcast:
 			clients := h.topics[payload.topic]
-
 			for client := range clients {
 				select {
 				case client.send <- payload.data:
 				default:
-					h.RemoveClient(client)
+					h.removeClient(client)
 				}
 			}
+
+		case <-h.sync:
+			h.sync <- struct{}{}
 		}
 	}
 }

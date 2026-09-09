@@ -17,11 +17,11 @@ const maxWebhookBodyBytes = 1 << 16 // 64 KB
 
 type WebhookHandler struct {
 	keyProvider auth.KeyProvider
-	presence    *realtime.PresenceStore
+	presence    *VoiceRoomPresence
 	publisher   realtime.Publisher
 }
 
-func NewWebhookHandler(apiKey, apiSecret string, presence *realtime.PresenceStore, publisher realtime.Publisher) *WebhookHandler {
+func NewWebhookHandler(apiKey, apiSecret string, presence *VoiceRoomPresence, publisher realtime.Publisher) *WebhookHandler {
 	return &WebhookHandler{
 		keyProvider: auth.NewSimpleKeyProvider(apiKey, apiSecret),
 		presence:    presence,
@@ -29,8 +29,8 @@ func NewWebhookHandler(apiKey, apiSecret string, presence *realtime.PresenceStor
 	}
 }
 
-func participantFromEvent(p *livekit.ParticipantInfo) realtime.Participant {
-	return realtime.Participant{
+func participantFromEvent(p *livekit.ParticipantInfo) Participant {
+	return Participant{
 		SID:      p.GetSid(),
 		UserID:   p.GetIdentity(),
 		Username: p.GetName(),

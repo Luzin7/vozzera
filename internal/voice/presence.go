@@ -1,4 +1,4 @@
-package realtime
+package voice
 
 import (
 	"encoding/json"
@@ -13,26 +13,25 @@ type Participant struct {
 	Username string `json:"username"`
 }
 
-type PresenceStore struct {
+type VoiceRoomPresence struct {
 	mu    sync.RWMutex
 	rooms map[uuid.UUID]map[string]Participant
 }
 
-func NewPresenceStore() *PresenceStore {
-	return &PresenceStore{
+func NewVoiceRoomPresence() *VoiceRoomPresence {
+	return &VoiceRoomPresence{
 		rooms: make(map[uuid.UUID]map[string]Participant),
 	}
 }
 
-func (ps *PresenceStore) snapshot(roomID uuid.UUID) []Participant {
+func (ps *VoiceRoomPresence) snapshot(roomID uuid.UUID) []Participant {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
 	return ps.snapshotUnsafe(roomID)
 }
 
-// snapshotUnsafe builds participant slice without locking. Caller must hold at least RLock.
-func (ps *PresenceStore) snapshotUnsafe(roomID uuid.UUID) []Participant {
+func (ps *VoiceRoomPresence) snapshotUnsafe(roomID uuid.UUID) []Participant {
 	room, exists := ps.rooms[roomID]
 	if !exists {
 		return []Participant{}
@@ -46,14 +45,14 @@ func (ps *PresenceStore) snapshotUnsafe(roomID uuid.UUID) []Participant {
 	return participants
 }
 
-func (ps *PresenceStore) Snapshot(roomID uuid.UUID) []Participant {
+func (ps *VoiceRoomPresence) Snapshot(roomID uuid.UUID) []Participant {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
 	return ps.snapshot(roomID)
 }
 
-func (ps *PresenceStore) SnapshotJSON(roomID uuid.UUID) []byte {
+func (ps *VoiceRoomPresence) SnapshotJSON(roomID uuid.UUID) []byte {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -71,14 +70,14 @@ func (ps *PresenceStore) SnapshotJSON(roomID uuid.UUID) []byte {
 	return data
 }
 
-func (ps *PresenceStore) Clear(roomID uuid.UUID) {
+func (ps *VoiceRoomPresence) Clear(roomID uuid.UUID) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
 	delete(ps.rooms, roomID)
 }
 
-func (ps *PresenceStore) Join(roomID uuid.UUID, participant Participant) []Participant {
+func (ps *VoiceRoomPresence) Join(roomID uuid.UUID, participant Participant) []Participant {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
@@ -91,7 +90,7 @@ func (ps *PresenceStore) Join(roomID uuid.UUID, participant Participant) []Parti
 	return ps.snapshotUnsafe(roomID)
 }
 
-func (ps *PresenceStore) Leave(roomID uuid.UUID, sid string) ([]Participant, bool) {
+func (ps *VoiceRoomPresence) Leave(roomID uuid.UUID, sid string) ([]Participant, bool) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
