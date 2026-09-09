@@ -18,8 +18,7 @@ func TestHub_Register(t *testing.T) {
 	client.Topics = make(map[Topic]bool)
 
 	hub.Register(client)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	if !hub.clients[client] {
 		t.Error("cliente não registrado")
@@ -36,8 +35,7 @@ func TestHub_Unregister(t *testing.T) {
 	client.Topics = make(map[Topic]bool)
 
 	hub.Register(client)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	hub.Unregister(client)
 
@@ -59,12 +57,10 @@ func TestHub_SubscribeEPublish(t *testing.T) {
 	topic := Topic("room:" + uuid.New().String())
 
 	hub.Register(client)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	hub.Subscribe(client, topic)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	if !hub.topics[topic][client] {
 		t.Error("cliente não inscrito no tópico")
@@ -103,12 +99,10 @@ func TestHub_RevokeRemoveClienteDaSessionID(t *testing.T) {
 
 	hub.Register(client1)
 	hub.Register(client2)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	hub.Revoke(ctx, sessionID)
-	hub.Publish(ctx, Topic("__sync__"), Envelope{})
-	<-time.After(time.Millisecond)
+	hub.Sync(ctx)
 
 	if hub.clients[client1] {
 		t.Error("client1 não deveria estar registrado após revoke")
