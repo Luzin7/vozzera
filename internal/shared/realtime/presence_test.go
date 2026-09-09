@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestPresenceStore_Join_AdicionaParticipante(t *testing.T) {
-	ps := NewPresenceStore()
+func TestVoiceRoomPresence_Join_AdicionaParticipante(t *testing.T) {
+	ps := NewVoiceRoomPresence()
 	roomID := uuid.New()
 	p := Participant{SID: "sid-1", UserID: "user-1", Username: "Alice"}
 
@@ -22,8 +22,8 @@ func TestPresenceStore_Join_AdicionaParticipante(t *testing.T) {
 	}
 }
 
-func TestPresenceStore_JoinMultiplosParticipantes(t *testing.T) {
-	ps := NewPresenceStore()
+func TestVoiceRoomPresence_JoinMultiplosParticipantes(t *testing.T) {
+	ps := NewVoiceRoomPresence()
 	roomID := uuid.New()
 
 	ps.Join(roomID, Participant{SID: "sid-1", UserID: "user-1", Username: "Alice"})
@@ -34,8 +34,8 @@ func TestPresenceStore_JoinMultiplosParticipantes(t *testing.T) {
 	}
 }
 
-func TestPresenceStore_LeaveExistente(t *testing.T) {
-	ps := NewPresenceStore()
+func TestVoiceRoomPresence_LeaveExistente(t *testing.T) {
+	ps := NewVoiceRoomPresence()
 	roomID := uuid.New()
 	p := Participant{SID: "sid-1", UserID: "user-1", Username: "Alice"}
 
@@ -50,8 +50,8 @@ func TestPresenceStore_LeaveExistente(t *testing.T) {
 	}
 }
 
-func TestPresenceStore_LeaveInexistente(t *testing.T) {
-	ps := NewPresenceStore()
+func TestVoiceRoomPresence_LeaveInexistente(t *testing.T) {
+	ps := NewVoiceRoomPresence()
 	roomID := uuid.New()
 
 	_, left := ps.Leave(roomID, "sid-inexistente")
@@ -61,8 +61,8 @@ func TestPresenceStore_LeaveInexistente(t *testing.T) {
 	}
 }
 
-func TestPresenceStore_ClearRemoveSalaToda(t *testing.T) {
-	ps := NewPresenceStore()
+func TestVoiceRoomPresence_ClearRemoveSalaToda(t *testing.T) {
+	ps := NewVoiceRoomPresence()
 	roomID := uuid.New()
 
 	ps.Join(roomID, Participant{SID: "sid-1", UserID: "user-1", Username: "Alice"})
@@ -76,8 +76,8 @@ func TestPresenceStore_ClearRemoveSalaToda(t *testing.T) {
 	}
 }
 
-func TestPresenceStore_SnapshotJSONComParticipantes(t *testing.T) {
-	ps := NewPresenceStore()
+func TestVoiceRoomPresence_SnapshotJSONComParticipantes(t *testing.T) {
+	ps := NewVoiceRoomPresence()
 	roomID := uuid.New()
 
 	ps.Join(roomID, Participant{SID: "sid-1", UserID: "user-1", Username: "Alice"})
@@ -95,8 +95,8 @@ func TestPresenceStore_SnapshotJSONComParticipantes(t *testing.T) {
 	}
 }
 
-func TestPresenceStore_SnapshotJSONVazio(t *testing.T) {
-	ps := NewPresenceStore()
+func TestVoiceRoomPresence_SnapshotJSONVazio(t *testing.T) {
+	ps := NewVoiceRoomPresence()
 	roomID := uuid.New()
 
 	data := ps.SnapshotJSON(roomID)

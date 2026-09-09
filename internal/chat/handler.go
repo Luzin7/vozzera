@@ -296,6 +296,7 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	client := realtime.NewClient(h.registerer, conn, claims.UserID, claims.Username, claims.SessionID, h.handler)
 
 	h.registerer.Register(client)
+	h.registerer.Subscribe(client, realtime.GlobalPresenceTopic)
 
 	go client.WritePump()
 	go client.ReadPump()

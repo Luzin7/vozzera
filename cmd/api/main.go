@@ -47,11 +47,11 @@ func main() {
 	hub := realtime.NewHub()
 	go hub.Run(context.Background())
 
-	presenceStore := realtime.NewPresenceStore()
+	voicePresence := realtime.NewVoiceRoomPresence()
 
 	sender := chat.NewSendMessageService(chatQueries, hub)
 
-	chatRouter := chat.NewChatRouter(sender, hub, chat.NewRoomAuthorizer(chatQueries), presenceStore)
+	chatRouter := chat.NewChatRouter(sender, hub, chat.NewRoomAuthorizer(chatQueries), voicePresence)
 
 	go cleanupExpiredSessions(authQueries)
 	go cleanupExpiredPasswordResetTokens(authQueries)
@@ -115,7 +115,7 @@ func main() {
 		AuthMW:     authMw,
 		ApiKey:     cfg.LiveKitAPIKey,
 		ApiSecret:  cfg.LiveKitAPISecret,
-		Presence:   presenceStore,
+		Presence:   voicePresence,
 		Publisher:  hub,
 	})
 	swagger.RegisterHandlers(mux)

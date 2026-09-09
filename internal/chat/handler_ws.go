@@ -14,10 +14,10 @@ type ChatRouter struct {
 	registerer realtime.Registerer
 	publisher  realtime.Publisher
 	authorizer realtime.SubscriptionAuthorizer
-	presence   *realtime.PresenceStore
+	presence   *realtime.VoiceRoomPresence
 }
 
-func NewChatRouter(sender *SendMessageService, hub *realtime.Hub, authorizer realtime.SubscriptionAuthorizer, presence *realtime.PresenceStore) *ChatRouter {
+func NewChatRouter(sender *SendMessageService, hub *realtime.Hub, authorizer realtime.SubscriptionAuthorizer, presence *realtime.VoiceRoomPresence) *ChatRouter {
 	return &ChatRouter{sender: sender, registerer: hub, publisher: hub, authorizer: authorizer, presence: presence}
 }
 

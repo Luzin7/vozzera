@@ -8,6 +8,8 @@ import (
 
 type Topic string
 
+const GlobalPresenceTopic Topic = "__presence__"
+
 type Envelope struct {
 	V     int             `json:"v"`
 	Type  string          `json:"type"`
