@@ -21,7 +21,7 @@ type VoiceDeps struct {
 	AuthMW     func(http.Handler) http.Handler
 	ApiKey     string
 	ApiSecret  string
-	Presence   *realtime.PresenceStore
+	Presence   *realtime.VoiceRoomPresence
 	Publisher  realtime.Publisher
 }
 
