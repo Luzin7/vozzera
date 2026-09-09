@@ -14,6 +14,7 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/auth"
 	"github.com/Luzin7/vozzera-backend/internal/chat"
 	"github.com/Luzin7/vozzera-backend/internal/infra/sendgrid"
+	"github.com/Luzin7/vozzera-backend/internal/presence"
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
 	shareddb "github.com/Luzin7/vozzera-backend/internal/shared/db"
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
@@ -60,7 +61,10 @@ func main() {
 	hub := realtime.NewHub()
 	go hub.Run()
 
-	voicePresence := realtime.NewVoiceRoomPresence()
+	presenceSvc := presence.NewService(hub)
+	hub.SetPresence(presenceSvc)
+
+	voicePresence := voice.NewVoiceRoomPresence()
 	sender := chat.NewSendMessageService(chatQueries, hub)
 	chatRouter := chat.NewChatRouter(sender, hub, chat.NewRoomAuthorizer(chatQueries), voicePresence)
 

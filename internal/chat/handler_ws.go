@@ -9,15 +9,19 @@ import (
 	"github.com/google/uuid"
 )
 
+type VoicePresenceProvider interface {
+	SnapshotJSON(roomID uuid.UUID) []byte
+}
+
 type ChatRouter struct {
 	sender     *SendMessageService
 	registerer realtime.Registerer
 	publisher  realtime.Publisher
 	authorizer realtime.SubscriptionAuthorizer
-	presence   *realtime.VoiceRoomPresence
+	presence   VoicePresenceProvider
 }
 
-func NewChatRouter(sender *SendMessageService, hub *realtime.Hub, authorizer realtime.SubscriptionAuthorizer, presence *realtime.VoiceRoomPresence) *ChatRouter {
+func NewChatRouter(sender *SendMessageService, hub *realtime.Hub, authorizer realtime.SubscriptionAuthorizer, presence VoicePresenceProvider) *ChatRouter {
 	return &ChatRouter{sender: sender, registerer: hub, publisher: hub, authorizer: authorizer, presence: presence}
 }
 
@@ -45,7 +49,7 @@ func (h *ChatRouter) HandleMessage(c *realtime.Client, env realtime.Envelope) er
 				defer cancel()
 				h.publisher.Publish(ctx, topic, realtime.Envelope{
 					V:     1,
-					Type:  EventVoicePresenceSnapshot,
+					Type:  realtime.PresenceSnapshot,
 					Topic: topic,
 					TS:    time.Now(),
 					Data:  data,

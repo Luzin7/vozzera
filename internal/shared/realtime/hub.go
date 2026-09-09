@@ -4,16 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
 )
-
-type onlineUser struct {
-	Username    string
-	Connections int32
-}
 
 type subscription struct {
 	client *Client
@@ -25,33 +18,23 @@ type broadcastPayload struct {
 	data  []byte
 }
 
-type UserPresence struct {
-	UserID   uuid.UUID `json:"user_id"`
-	Username string    `json:"username"`
-}
-
 type Hub struct {
 	clients     map[*Client]bool
-	onlineUsers map[uuid.UUID]*onlineUser
 	topics      map[Topic]map[*Client]bool
-
-	presenceMu sync.RWMutex
-
+	presence    PresenceHook
 	broadcast   chan broadcastPayload
 	register    chan *Client
 	unregister  chan *Client
 	subscribe   chan subscription
 	unsubscribe chan subscription
 	revoke      chan uuid.UUID
-
-	stop chan struct{}
-	done chan struct{}
+	stop        chan struct{}
+	done        chan struct{}
 }
 
 func NewHub() *Hub {
 	return &Hub{
 		clients:     make(map[*Client]bool),
-		onlineUsers: make(map[uuid.UUID]*onlineUser),
 		topics:      make(map[Topic]map[*Client]bool),
 		broadcast:   make(chan broadcastPayload),
 		register:    make(chan *Client),
@@ -62,6 +45,10 @@ func NewHub() *Hub {
 		stop:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
+}
+
+func (h *Hub) SetPresence(p PresenceHook) {
+	h.presence = p
 }
 
 func (h *Hub) Shutdown(ctx context.Context) error {
@@ -98,20 +85,6 @@ func (h *Hub) Publish(ctx context.Context, topic Topic, env Envelope) error {
 	case <-h.done:
 		return errors.New("hub encerrado")
 	}
-}
-
-func (h *Hub) OnlineUsers() []UserPresence {
-	h.presenceMu.RLock()
-	defer h.presenceMu.RUnlock()
-
-	users := make([]UserPresence, 0, len(h.onlineUsers))
-	for id, u := range h.onlineUsers {
-		users = append(users, UserPresence{
-			UserID:   id,
-			Username: u.Username,
-		})
-	}
-	return users
 }
 
 func (h *Hub) Subscribe(c *Client, topic Topic) {
@@ -153,21 +126,7 @@ func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
 	}
 }
 
-func (h *Hub) broadcastPresence(env Envelope) {
-	data, err := json.Marshal(env)
-	if err != nil {
-		return
-	}
-	for client := range h.topics[GlobalPresenceTopic] {
-		select {
-		case client.send <- data:
-		default:
-			h.removeClient(client, true)
-		}
-	}
-}
-
-func (h *Hub) removeClient(c *Client, notifyPresence bool) {
+func (h *Hub) removeClient(c *Client) {
 	if _, ok := h.clients[c]; !ok {
 		return
 	}
@@ -185,34 +144,14 @@ func (h *Hub) removeClient(c *Client, notifyPresence bool) {
 	}
 	c.Topics = make(map[Topic]bool)
 
-	h.presenceMu.Lock()
-	u, ok := h.onlineUsers[c.UserID]
-	if ok {
-		u.Connections--
-		if u.Connections <= 0 {
-			delete(h.onlineUsers, c.UserID)
-		}
-	}
-	h.presenceMu.Unlock()
-
-	if ok && u.Connections <= 0 && notifyPresence {
-		data, _ := json.Marshal(map[string]interface{}{
-			"user_id":  c.UserID,
-			"username": u.Username,
-		})
-		h.broadcastPresence(Envelope{
-			V:     1,
-			Type:  UserOffline,
-			Topic: GlobalPresenceTopic,
-			TS:    time.Now(),
-			Data:  data,
-		})
+	if h.presence != nil {
+		h.presence.HandleClientDisconnected(c.UserID, c.Username)
 	}
 }
 
 func (h *Hub) drain() {
 	for client := range h.clients {
-		h.removeClient(client, false)
+		h.removeClient(client)
 	}
 }
 
@@ -227,40 +166,17 @@ func (h *Hub) Run() {
 
 		case client := <-h.register:
 			h.clients[client] = true
-
-			h.presenceMu.Lock()
-			u, exists := h.onlineUsers[client.UserID]
-			if !exists {
-				u = &onlineUser{Username: client.Username}
-				h.onlineUsers[client.UserID] = u
-			} else {
-				u.Username = client.Username
-			}
-			u.Connections++
-			isFirstConn := u.Connections == 1
-			h.presenceMu.Unlock()
-
-			if isFirstConn {
-				data, _ := json.Marshal(map[string]interface{}{
-					"user_id":  client.UserID,
-					"username": u.Username,
-				})
-				h.broadcastPresence(Envelope{
-					V:     1,
-					Type:  UserOnline,
-					Topic: GlobalPresenceTopic,
-					TS:    time.Now(),
-					Data:  data,
-				})
+			if h.presence != nil {
+				h.presence.HandleClientConnected(client.UserID, client.Username)
 			}
 
 		case client := <-h.unregister:
-			h.removeClient(client, true)
+			h.removeClient(client)
 
 		case sessionID := <-h.revoke:
 			for client := range h.clients {
 				if client.SessionID == sessionID {
-					h.removeClient(client, true)
+					h.removeClient(client)
 				}
 			}
 
@@ -270,6 +186,16 @@ func (h *Hub) Run() {
 			}
 			h.topics[sub.topic][sub.client] = true
 			sub.client.Topics[sub.topic] = true
+			if h.presence != nil {
+				data := h.presence.HandleTopicSubscribed(sub.topic)
+				if data != nil {
+					select {
+					case sub.client.send <- data:
+					default:
+						h.removeClient(sub.client)
+					}
+				}
+			}
 
 		case unsub := <-h.unsubscribe:
 			if clients, ok := h.topics[unsub.topic]; ok {
@@ -286,7 +212,7 @@ func (h *Hub) Run() {
 				select {
 				case client.send <- payload.data:
 				default:
-					h.removeClient(client, true)
+					h.removeClient(client)
 				}
 			}
 		}
