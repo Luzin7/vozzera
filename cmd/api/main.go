@@ -158,6 +158,7 @@ func main() {
 		"/api/rooms/":          {Limit: 120, Window: time.Minute},
 		"/api/voice/rooms":     {Limit: 60, Window: time.Minute},
 		"/api/voice/webhook":   {Limit: 120, Window: time.Minute},
+		"/api/presence":        {Limit: 60, Window: time.Minute},
 	})
 
 	auth.RegisterHandlers(mux, auth.AuthDeps{
@@ -196,6 +197,11 @@ func main() {
 		Publisher:  hub,
 	})
 	swagger.RegisterHandlers(mux)
+
+	presence.RegisterHandlers(mux, presence.HandlerDeps{
+		Service: presenceSvc,
+		AuthMW:  authMw,
+	})
 
 	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
 	finalHandler := httpx.Logger(handler)
