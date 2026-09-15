@@ -20,6 +20,7 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/Luzin7/vozzera-backend/internal/swagger"
+	"github.com/Luzin7/vozzera-backend/internal/transport/ws"
 	"github.com/Luzin7/vozzera-backend/internal/voice"
 )
 
@@ -59,15 +60,62 @@ func main() {
 	voiceQueries := voice.New(pool)
 
 	hub := realtime.NewHub()
-	go hub.Run()
 
-	presenceSvc := presence.NewService(hub)
+	presenceStats := &presenceStats{Queries: authQueries}
+	presenceSvc := presence.NewService(hub, presenceStats)
+	presenceCtx, presenceCancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer presenceCancel()
+
+	go func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-rootCtx.Done():
+				return
+
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(
+					rootCtx,
+					5*time.Second,
+				)
+
+				if err := presenceSvc.RefreshTotal(ctx); err != nil {
+					log.Printf("erro ao atualizar total de usuários: %v", err)
+				}
+
+				cancel()
+			}
+		}
+	}()
+
+	if err := presenceSvc.RefreshTotal(presenceCtx); err != nil {
+		log.Fatalf("erro ao carregar total de usuários: %v", err)
+	}
+	defer initCancel()
+
+	if err := presenceSvc.RefreshTotal(initCtx); err != nil {
+		log.Fatalf("erro ao carregar total de usuários: %v", err)
+	}
 	hub.SetPresence(presenceSvc)
+	go hub.Run()
 
 	voicePresence := voice.NewVoiceRoomPresence()
 	sender := chat.NewSendMessageService(chatQueries, hub)
-	chatRouter := chat.NewChatRouter(sender, hub, chat.NewRoomAuthorizer(chatQueries), voicePresence)
+	wsRouter := ws.NewRouter()
 
+	wsHandler := ws.NewHandler(ws.HandlerDeps{
+		Registerer: hub,
+		Router:     wsRouter,
+		SnapshotProviders: []ws.SnapshotProvider{
+			presenceSvc,
+		},
+		AllowedOrigins: cfg.CORSOrigins,
+	})
 	var bgWg sync.WaitGroup
 	bgWg.Add(2)
 	go func() {
@@ -80,6 +128,7 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
+
 	sessionAuth := auth.NewSessionAuthenticator(authQueries, cfg.SessionTouchWindow, cfg.SessionTTL)
 
 	authMw := httpx.Auth(func(ctx context.Context, raw string) (httpx.UserClaims, error) {
@@ -109,6 +158,7 @@ func main() {
 		"/api/rooms/":          {Limit: 120, Window: time.Minute},
 		"/api/voice/rooms":     {Limit: 60, Window: time.Minute},
 		"/api/voice/webhook":   {Limit: 120, Window: time.Minute},
+		"/api/presence":        {Limit: 60, Window: time.Minute},
 	})
 
 	auth.RegisterHandlers(mux, auth.AuthDeps{
@@ -123,12 +173,17 @@ func main() {
 	})
 
 	chat.RegisterHandlers(mux, chat.ChatDeps{
-		Repo:           chatQueries,
-		Publisher:      hub,
-		Registerer:     hub,
-		Handler:        chatRouter,
-		AuthMW:         authMw,
-		AllowedOrigins: cfg.CORSOrigins,
+		Repo:      chatQueries,
+		Publisher: hub,
+		AuthMW:    authMw,
+	})
+
+	chat.RegisterChatHandlers(wsRouter, chat.ChatHandlerDeps{
+		Sender:     sender,
+		Registerer: hub,
+		Publisher:  hub,
+		Authorizer: chat.NewRoomAuthorizer(chatQueries),
+		Presence:   voicePresence,
 	})
 
 	voice.RegisterHandlers(mux, voice.VoiceDeps{
@@ -143,8 +198,15 @@ func main() {
 	})
 	swagger.RegisterHandlers(mux)
 
+	presence.RegisterHandlers(mux, presence.HandlerDeps{
+		Service: presenceSvc,
+		AuthMW:  authMw,
+	})
+
 	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
 	finalHandler := httpx.Logger(handler)
+
+	mux.Handle("GET /api/ws", authMw(http.HandlerFunc(wsHandler.ServeHTTP)))
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -212,4 +274,21 @@ func cleanupExpiredPasswordResetTokens(ctx context.Context, queries *auth.Querie
 			}
 		}
 	}
+}
+
+type presenceStats struct {
+	*auth.Queries
+}
+
+func (s *presenceStats) ListUsers(ctx context.Context) ([]realtime.UserPresence, error) {
+	rows, err := s.Queries.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	users := make([]realtime.UserPresence, len(rows))
+	for i, r := range rows {
+		users[i] = realtime.UserPresence{UserID: r.ID, Username: r.Username}
+	}
+	return users, nil
 }

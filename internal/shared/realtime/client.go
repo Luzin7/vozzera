@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"time"
@@ -25,9 +26,12 @@ type Client struct {
 	SessionID  uuid.UUID
 	Topics     map[Topic]bool
 	Handler    InboundHandler
+	context    context.Context
+	ctxCancel  context.CancelFunc
 }
 
 func NewClient(registerer Registerer, conn *websocket.Conn, userID uuid.UUID, username string, sessionID uuid.UUID, handler InboundHandler) *Client {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Client{
 		registerer: registerer,
 		conn:       conn,
@@ -37,11 +41,22 @@ func NewClient(registerer Registerer, conn *websocket.Conn, userID uuid.UUID, us
 		SessionID:  sessionID,
 		Topics:     make(map[Topic]bool),
 		Handler:    handler,
+		context:    ctx,
+		ctxCancel:  cancel,
 	}
+}
+
+func (c *Client) Context() context.Context {
+	return c.context
+}
+
+func (c *Client) Send(data []byte) {
+	c.send <- data
 }
 
 func (c *Client) ReadPump() {
 	defer func() {
+		c.ctxCancel()
 		c.registerer.Unregister(c)
 		c.conn.Close()
 	}()

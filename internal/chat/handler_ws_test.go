@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
+	"github.com/Luzin7/vozzera-backend/internal/transport/ws"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -52,16 +53,17 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		reg := newFakeRegisterer()
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
 		pub := &fakePublisher{}
-		router := &ChatRouter{
-			registerer: reg,
-			publisher:  pub,
-			authorizer: &fakeAuthorizer{err: nil},
-		}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{
+			Registerer: reg,
+			Publisher:  pub,
+			Authorizer: &fakeAuthorizer{err: nil},
+		})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
 		env := realtime.Envelope{V: 1, Type: CmdSubscribe, Data: data}
 
-		err := router.HandleMessage(client, env)
+		err := r.HandleMessage(client, env)
 		if err != nil {
 			t.Fatalf("HandleMessage() erro inesperado: %v", err)
 		}
@@ -79,33 +81,35 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 	t.Run("subscribe sala voice", func(t *testing.T) {
 		reg := newFakeRegisterer()
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
-		router := &ChatRouter{
-			registerer: reg,
-			authorizer: &fakeAuthorizer{err: ErrNotTextRoom},
-		}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{
+			Registerer: reg,
+			Authorizer: &fakeAuthorizer{err: ErrNotTextRoom},
+		})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
 		env := realtime.Envelope{V: 1, Type: CmdSubscribe, Data: data}
 
-		err := router.HandleMessage(client, env)
+		err := r.HandleMessage(client, env)
 		if err != nil {
 			t.Fatalf("HandleMessage() erro inesperado: %v", err)
 		}
 
 		if len(reg.subscribed[userID.String()]) != 0 {
-			t.Error("subscribe não deveria ter sido chamado")
+			t.Error("subscribe nÃ£o deveria ter sido chamado")
 		}
 	})
 
 	t.Run("unsubscribe", func(t *testing.T) {
 		reg := newFakeRegisterer()
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
-		router := &ChatRouter{registerer: reg}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
 		env := realtime.Envelope{V: 1, Type: CmdUnsubscribe, Data: data}
 
-		err := router.HandleMessage(client, env)
+		err := r.HandleMessage(client, env)
 		if err != nil {
 			t.Fatalf("HandleMessage() erro inesperado: %v", err)
 		}
@@ -124,12 +128,13 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		reg := newFakeRegisterer()
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
 		pub := &fakePublisher{}
-		router := &ChatRouter{registerer: reg, publisher: pub}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
 		env := realtime.Envelope{V: 1, Type: CmdTypingStart, Data: data}
 
-		err := router.HandleMessage(client, env)
+		err := r.HandleMessage(client, env)
 		if err != nil {
 			t.Fatalf("HandleMessage() erro inesperado: %v", err)
 		}
@@ -143,6 +148,9 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		}
 		if got.Topic != realtime.Topic("room:"+roomID.String()) {
 			t.Errorf("topic = %q, want %q", got.Topic, "room:"+roomID.String())
+		}
+		if got.Data == nil {
+			t.Fatal("data é nil, esperava payload com user_id e username")
 		}
 
 		var payload map[string]interface{}
@@ -161,12 +169,13 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		reg := newFakeRegisterer()
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
 		pub := &fakePublisher{}
-		router := &ChatRouter{registerer: reg, publisher: pub}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
 		env := realtime.Envelope{V: 1, Type: CmdTypingStop, Data: data}
 
-		err := router.HandleMessage(client, env)
+		err := r.HandleMessage(client, env)
 		if err != nil {
 			t.Fatalf("HandleMessage() erro inesperado: %v", err)
 		}
@@ -177,6 +186,20 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		got := pub.envelopes[0]
 		if got.Type != CmdTypingStop {
 			t.Errorf("type = %q, want %q", got.Type, CmdTypingStop)
+		}
+		if got.Data == nil {
+			t.Fatal("data é nil, esperava payload com user_id e username")
+		}
+
+		var payload map[string]interface{}
+		if err := json.Unmarshal(got.Data, &payload); err != nil {
+			t.Fatalf("Unmarshal payload: %v", err)
+		}
+		if payload["user_id"] != userID.String() {
+			t.Errorf("user_id = %v, want %v", payload["user_id"], userID.String())
+		}
+		if payload["username"] != username {
+			t.Errorf("username = %v, want %v", payload["username"], username)
 		}
 	})
 
@@ -195,12 +218,13 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 			}, nil
 		}
 		sender := NewSendMessageService(repo, pub)
-		router := &ChatRouter{sender: sender, registerer: reg, publisher: pub}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{Sender: sender, Registerer: reg, Publisher: pub})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String(), "content": "hello"})
 		env := realtime.Envelope{V: 1, Type: CmdMessage, Data: data}
 
-		err := router.HandleMessage(client, env)
+		err := r.HandleMessage(client, env)
 		if err != nil {
 			t.Fatalf("HandleMessage() erro inesperado: %v", err)
 		}
@@ -225,18 +249,19 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 	t.Run("command com room_id nulo", func(t *testing.T) {
 		reg := newFakeRegisterer()
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
-		router := &ChatRouter{registerer: reg}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": uuid.Nil.String()})
 		env := realtime.Envelope{V: 1, Type: CmdSubscribe, Data: data}
 
-		err := router.HandleMessage(client, env)
+		err := r.HandleMessage(client, env)
 		if err != nil {
 			t.Fatalf("HandleMessage() erro inesperado: %v", err)
 		}
 
 		if len(reg.subscribed[userID.String()]) != 0 {
-			t.Error("subscribe não deveria ter sido chamado para room_id nulo")
+			t.Error("subscribe nÃ£o deveria ter sido chamado para room_id nulo")
 		}
 	})
 }

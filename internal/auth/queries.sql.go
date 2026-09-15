@@ -272,6 +272,46 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (I
 	return i, err
 }
 
+const listUsers = `-- name: ListUsers :many
+SELECT id, username FROM users ORDER BY username
+`
+
+type ListUsersRow struct {
+	ID       uuid.UUID `json:"id"`
+	Username string    `json:"username"`
+}
+
+func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
+	rows, err := q.db.Query(ctx, listUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUsersRow
+	for rows.Next() {
+		var i ListUsersRow
+		if err := rows.Scan(&i.ID, &i.Username); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const totalUsers = `-- name: TotalUsers :one
+SELECT COUNT(*) FROM users
+`
+
+func (q *Queries) TotalUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, totalUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const touchSession = `-- name: TouchSession :exec
 UPDATE sessions
 SET expires_at = $2

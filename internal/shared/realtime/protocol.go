@@ -47,5 +47,4 @@ type SubscriptionAuthorizer interface {
 type PresenceHook interface {
 	HandleClientConnected(userID uuid.UUID, username string)
 	HandleClientDisconnected(userID uuid.UUID, username string)
-	HandleTopicSubscribed(topic Topic) []byte
 }
