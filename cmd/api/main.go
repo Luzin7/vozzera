@@ -61,7 +61,8 @@ func main() {
 
 	hub := realtime.NewHub()
 
-	presenceSvc := presence.NewService(hub, authQueries)
+	presenceStats := &presenceStats{Queries: authQueries}
+	presenceSvc := presence.NewService(hub, presenceStats)
 	presenceCtx, presenceCancel := context.WithTimeout(
 		context.Background(),
 		5*time.Second,
@@ -157,6 +158,7 @@ func main() {
 		"/api/rooms/":          {Limit: 120, Window: time.Minute},
 		"/api/voice/rooms":     {Limit: 60, Window: time.Minute},
 		"/api/voice/webhook":   {Limit: 120, Window: time.Minute},
+		"/api/presence":        {Limit: 60, Window: time.Minute},
 	})
 
 	auth.RegisterHandlers(mux, auth.AuthDeps{
@@ -195,6 +197,11 @@ func main() {
 		Publisher:  hub,
 	})
 	swagger.RegisterHandlers(mux)
+
+	presence.RegisterHandlers(mux, presence.HandlerDeps{
+		Service: presenceSvc,
+		AuthMW:  authMw,
+	})
 
 	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
 	finalHandler := httpx.Logger(handler)
@@ -267,4 +274,21 @@ func cleanupExpiredPasswordResetTokens(ctx context.Context, queries *auth.Querie
 			}
 		}
 	}
+}
+
+type presenceStats struct {
+	*auth.Queries
+}
+
+func (s *presenceStats) ListUsers(ctx context.Context) ([]realtime.UserPresence, error) {
+	rows, err := s.Queries.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	users := make([]realtime.UserPresence, len(rows))
+	for i, r := range rows {
+		users[i] = realtime.UserPresence{UserID: r.ID, Username: r.Username}
+	}
+	return users, nil
 }

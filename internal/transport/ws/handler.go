@@ -69,6 +69,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 
 	h.registerer.Register(client)
+	h.registerer.Subscribe(client, realtime.GlobalPresenceTopic)
 
 	go client.WritePump()
 	go client.ReadPump()
