@@ -208,16 +208,6 @@ func (h *Hub) Run() {
 
 			h.topics[sub.topic][sub.client] = true
 			sub.client.Topics[sub.topic] = true
-			if h.presence != nil {
-				data := h.presence.HandleTopicSubscribed(sub.topic)
-				if data != nil {
-					select {
-					case sub.client.send <- data:
-					default:
-						h.removeClient(sub.client)
-					}
-				}
-			}
 
 		case unsub := <-h.unsubscribe:
 			if clients, ok := h.topics[unsub.topic]; ok {
