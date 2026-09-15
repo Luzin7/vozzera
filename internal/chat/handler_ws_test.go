@@ -149,8 +149,19 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		if got.Topic != realtime.Topic("room:"+roomID.String()) {
 			t.Errorf("topic = %q, want %q", got.Topic, "room:"+roomID.String())
 		}
-		if got.Data != nil {
-			t.Errorf("data = %v, want nil", string(got.Data))
+		if got.Data == nil {
+			t.Fatal("data é nil, esperava payload com user_id e username")
+		}
+
+		var payload map[string]interface{}
+		if err := json.Unmarshal(got.Data, &payload); err != nil {
+			t.Fatalf("Unmarshal payload: %v", err)
+		}
+		if payload["user_id"] != userID.String() {
+			t.Errorf("user_id = %v, want %v", payload["user_id"], userID.String())
+		}
+		if payload["username"] != username {
+			t.Errorf("username = %v, want %v", payload["username"], username)
 		}
 	})
 
@@ -176,8 +187,19 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		if got.Type != CmdTypingStop {
 			t.Errorf("type = %q, want %q", got.Type, CmdTypingStop)
 		}
-		if got.Data != nil {
-			t.Errorf("data = %v, want nil", string(got.Data))
+		if got.Data == nil {
+			t.Fatal("data é nil, esperava payload com user_id e username")
+		}
+
+		var payload map[string]interface{}
+		if err := json.Unmarshal(got.Data, &payload); err != nil {
+			t.Fatalf("Unmarshal payload: %v", err)
+		}
+		if payload["user_id"] != userID.String() {
+			t.Errorf("user_id = %v, want %v", payload["user_id"], userID.String())
+		}
+		if payload["username"] != username {
+			t.Errorf("username = %v, want %v", payload["username"], username)
 		}
 	})
 

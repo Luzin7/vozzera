@@ -104,12 +104,16 @@ func handleTyping(ctx context.Context, c *realtime.Client, typingType string, da
 		return nil
 	}
 	topic := realtime.Topic("room:" + cmd.RoomID.String())
+	typingData, _ := json.Marshal(map[string]interface{}{
+		"user_id":  c.UserID,
+		"username": c.Username,
+	})
 	env := realtime.Envelope{
 		V:     1,
 		Type:  typingType,
 		Topic: topic,
 		TS:    time.Now(),
-		Data:  nil,
+		Data:  typingData,
 	}
 
 	return deps.Publisher.Publish(ctx, topic, env)
