@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
@@ -26,12 +25,9 @@ type UpdateMessageRequest struct {
 }
 
 type ChatDeps struct {
-	Repo           Repository
-	Publisher      realtime.Publisher
-	Registerer     realtime.Registerer
-	Handler        realtime.InboundHandler
-	AuthMW         func(http.Handler) http.Handler
-	AllowedOrigins []string
+	Repo      Repository
+	Publisher realtime.Publisher
+	AuthMW    func(http.Handler) http.Handler
 }
 
 type Handler struct {
@@ -49,16 +45,13 @@ type Handler struct {
 
 func RegisterHandlers(mux *http.ServeMux, deps ChatDeps) {
 	h := &Handler{
-		listRooms:      NewListRoomsService(deps.Repo),
-		createRoom:     NewCreateRoomService(deps.Repo, deps.Publisher),
-		updateRoom:     NewUpdateRoomService(deps.Repo, deps.Publisher),
-		deleteRoom:     NewDeleteRoomService(deps.Repo, deps.Publisher),
-		getMessages:    NewGetMessagesService(deps.Repo),
-		updateMessage:  NewUpdateMessageService(deps.Repo, deps.Publisher),
-		deleteMessage:  NewDeleteMessageService(deps.Repo, deps.Publisher),
-		registerer:     deps.Registerer,
-		handler:        deps.Handler,
-		allowedOrigins: deps.AllowedOrigins,
+		listRooms:     NewListRoomsService(deps.Repo),
+		createRoom:    NewCreateRoomService(deps.Repo, deps.Publisher),
+		updateRoom:    NewUpdateRoomService(deps.Repo, deps.Publisher),
+		deleteRoom:    NewDeleteRoomService(deps.Repo, deps.Publisher),
+		getMessages:   NewGetMessagesService(deps.Repo),
+		updateMessage: NewUpdateMessageService(deps.Repo, deps.Publisher),
+		deleteMessage: NewDeleteMessageService(deps.Repo, deps.Publisher),
 	}
 
 	mux.Handle("GET /api/rooms", deps.AuthMW(http.HandlerFunc(h.handleListRooms)))
@@ -68,7 +61,6 @@ func RegisterHandlers(mux *http.ServeMux, deps ChatDeps) {
 	mux.Handle("GET /api/rooms/{id}/messages", deps.AuthMW(http.HandlerFunc(h.handleGetMessages)))
 	mux.Handle("PATCH /api/rooms/{id}/messages/{content_id}", deps.AuthMW(http.HandlerFunc(h.handleUpdateMessage)))
 	mux.Handle("DELETE /api/rooms/{id}/messages/{content_id}", deps.AuthMW(http.HandlerFunc(h.handleDeleteMessage)))
-	mux.Handle("GET /api/ws", deps.AuthMW(http.HandlerFunc(h.handleWebSocket)))
 }
 
 func (h *Handler) handleListRooms(w http.ResponseWriter, r *http.Request) {
@@ -265,39 +257,4 @@ func (h *Handler) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, DeleteMessagePresenter(out.Message))
-}
-
-func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	claims, ok := httpx.UserFromContext(r.Context())
-	if !ok {
-		http.Error(w, "Não autenticado", http.StatusUnauthorized)
-		return
-	}
-
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			origin := r.Header.Get("Origin")
-			for _, allowed := range h.allowedOrigins {
-				if origin == allowed {
-					return true
-				}
-			}
-			return false
-		},
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
-	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-
-	client := realtime.NewClient(h.registerer, conn, claims.UserID, claims.Username, claims.SessionID, h.handler)
-
-	h.registerer.Register(client)
-	h.registerer.Subscribe(client, realtime.GlobalPresenceTopic)
-
-	go client.WritePump()
-	go client.ReadPump()
 }

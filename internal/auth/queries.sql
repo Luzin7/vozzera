@@ -72,3 +72,7 @@ DELETE FROM sessions WHERE user_id = $1;
 
 -- name: CleanupExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at < NOW();
+
+-- name: TotalUsers :one
+SELECT COUNT(*) FROM users;
+
