@@ -47,6 +47,14 @@ func (f *fakeStats) TotalUsers(_ context.Context) (int64, error) {
 	return 100, nil
 }
 
+func (f *fakeStats) ListUsers(_ context.Context) ([]realtime.UserPresence, error) {
+	return []realtime.UserPresence{
+		{UserID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), Username: "alice"},
+		{UserID: uuid.MustParse("00000000-0000-0000-0000-000000000002"), Username: "bob"},
+		{UserID: uuid.MustParse("00000000-0000-0000-0000-000000000003"), Username: "charlie"},
+	}, nil
+}
+
 var _ UserStatsProvider = (*fakeStats)(nil)
 
 func TestService_HandleClientConnected_FirstConnectionBroadcastsOnline(t *testing.T) {

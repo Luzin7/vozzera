@@ -61,7 +61,8 @@ func main() {
 
 	hub := realtime.NewHub()
 
-	presenceSvc := presence.NewService(hub, authQueries)
+	presenceStats := &presenceStats{Queries: authQueries}
+	presenceSvc := presence.NewService(hub, presenceStats)
 	presenceCtx, presenceCancel := context.WithTimeout(
 		context.Background(),
 		5*time.Second,
@@ -267,4 +268,21 @@ func cleanupExpiredPasswordResetTokens(ctx context.Context, queries *auth.Querie
 			}
 		}
 	}
+}
+
+type presenceStats struct {
+	*auth.Queries
+}
+
+func (s *presenceStats) ListUsers(ctx context.Context) ([]realtime.UserPresence, error) {
+	rows, err := s.Queries.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	users := make([]realtime.UserPresence, len(rows))
+	for i, r := range rows {
+		users[i] = realtime.UserPresence{UserID: r.ID, Username: r.Username}
+	}
+	return users, nil
 }
