@@ -128,7 +128,6 @@ func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
 	}
 }
 
-// Sync bloqueia até a goroutine do Run() processar todos os comandos pendentes.
 func (h *Hub) Sync(ctx context.Context) error {
 	select {
 	case h.sync <- struct{}{}:
@@ -206,26 +205,19 @@ func (h *Hub) Run() {
 			if h.topics[sub.topic] == nil {
 				h.topics[sub.topic] = make(map[*Client]bool)
 			}
+
 			h.topics[sub.topic][sub.client] = true
 			sub.client.Topics[sub.topic] = true
-			if h.presence != nil {
-				data := h.presence.HandleTopicSubscribed(sub.topic)
-				if data != nil {
-					select {
-					case sub.client.send <- data:
-					default:
-						h.removeClient(sub.client)
-					}
-				}
-			}
 
 		case unsub := <-h.unsubscribe:
 			if clients, ok := h.topics[unsub.topic]; ok {
 				delete(clients, unsub.client)
+
 				if len(clients) == 0 {
 					delete(h.topics, unsub.topic)
 				}
 			}
+
 			delete(unsub.client.Topics, unsub.topic)
 
 		case payload := <-h.broadcast:

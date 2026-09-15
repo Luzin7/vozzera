@@ -272,6 +272,17 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (I
 	return i, err
 }
 
+const totalUsers = `-- name: TotalUsers :one
+SELECT COUNT(*) FROM users
+`
+
+func (q *Queries) TotalUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, totalUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const touchSession = `-- name: TouchSession :exec
 UPDATE sessions
 SET expires_at = $2
