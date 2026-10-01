@@ -24,14 +24,7 @@ func NewVoiceRoomPresence() *VoiceRoomPresence {
 	}
 }
 
-func (ps *VoiceRoomPresence) snapshot(roomID uuid.UUID) []Participant {
-	ps.mu.RLock()
-	defer ps.mu.RUnlock()
-
-	return ps.snapshotUnsafe(roomID)
-}
-
-func (ps *VoiceRoomPresence) snapshotUnsafe(roomID uuid.UUID) []Participant {
+func (ps *VoiceRoomPresence) snapshotLocked(roomID uuid.UUID) []Participant {
 	room, exists := ps.rooms[roomID]
 	if !exists {
 		return []Participant{}
@@ -49,21 +42,13 @@ func (ps *VoiceRoomPresence) Snapshot(roomID uuid.UUID) []Participant {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
-	return ps.snapshot(roomID)
+	return ps.snapshotLocked(roomID)
 }
 
 func (ps *VoiceRoomPresence) SnapshotJSON(roomID uuid.UUID) []byte {
-	ps.mu.RLock()
-	defer ps.mu.RUnlock()
-
-	room, exists := ps.rooms[roomID]
-	if !exists || len(room) == 0 {
+	participants := ps.Snapshot(roomID)
+	if len(participants) == 0 {
 		return nil
-	}
-
-	participants := make([]Participant, 0, len(room))
-	for _, p := range room {
-		participants = append(participants, p)
 	}
 
 	data, _ := json.Marshal(participants)
@@ -87,7 +72,7 @@ func (ps *VoiceRoomPresence) Join(roomID uuid.UUID, participant Participant) []P
 
 	ps.rooms[roomID][participant.SID] = participant
 
-	return ps.snapshotUnsafe(roomID)
+	return ps.snapshotLocked(roomID)
 }
 
 func (ps *VoiceRoomPresence) Leave(roomID uuid.UUID, sid string) ([]Participant, bool) {
@@ -104,5 +89,5 @@ func (ps *VoiceRoomPresence) Leave(roomID uuid.UUID, sid string) ([]Participant,
 	}
 	delete(room, sid)
 
-	return ps.snapshotUnsafe(roomID), true
+	return ps.snapshotLocked(roomID), true
 }

@@ -6,18 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type RoomPayload struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type RoomDeletedPayload struct {
-	ID    uuid.UUID `json:"id"`
-	IsMod bool      `json:"is_mod"`
-}
-
 type MessagePayload struct {
 	ID        uuid.UUID `json:"id"`
 	RoomID    uuid.UUID `json:"room_id"`

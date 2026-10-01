@@ -15,6 +15,7 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/chat"
 	"github.com/Luzin7/vozzera-backend/internal/infra/sendgrid"
 	"github.com/Luzin7/vozzera-backend/internal/presence"
+	"github.com/Luzin7/vozzera-backend/internal/room"
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
 	shareddb "github.com/Luzin7/vozzera-backend/internal/shared/db"
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
@@ -57,7 +58,7 @@ func main() {
 
 	authQueries := auth.New(pool)
 	chatQueries := chat.New(pool)
-	voiceQueries := voice.New(pool)
+	roomQueries := room.New(pool)
 
 	hub := realtime.NewHub()
 
@@ -156,7 +157,6 @@ func main() {
 		"/api/voice/token":     {Limit: 30, Window: time.Minute},
 		"/api/rooms":           {Limit: 120, Window: time.Minute},
 		"/api/rooms/":          {Limit: 120, Window: time.Minute},
-		"/api/voice/rooms":     {Limit: 60, Window: time.Minute},
 		"/api/voice/webhook":   {Limit: 120, Window: time.Minute},
 		"/api/presence":        {Limit: 60, Window: time.Minute},
 	})
@@ -173,8 +173,16 @@ func main() {
 	})
 
 	chat.RegisterHandlers(mux, chat.ChatDeps{
-		Repo:      chatQueries,
+		Repo:       chatQueries,
+		RoomAccess: room.NewAccess(roomQueries),
+		Publisher:  hub,
+		AuthMW:     authMw,
+	})
+
+	room.RegisterHandlers(mux, room.RoomDeps{
+		Repo:      roomQueries,
 		Publisher: hub,
+		Revoker:   hub,
 		AuthMW:    authMw,
 	})
 
@@ -182,12 +190,12 @@ func main() {
 		Sender:     sender,
 		Registerer: hub,
 		Publisher:  hub,
-		Authorizer: chat.NewRoomAuthorizer(chatQueries),
+		Authorizer: room.NewRoomAuthorizer(roomQueries),
 		Presence:   voicePresence,
 	})
 
 	voice.RegisterHandlers(mux, voice.VoiceDeps{
-		Repo:       voiceQueries,
+		Access:     room.NewAccess(roomQueries),
 		Issuer:     issuer,
 		LiveKitURL: cfg.LiveKitURL,
 		AuthMW:     authMw,
