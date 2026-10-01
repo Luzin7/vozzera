@@ -13,8 +13,8 @@ import (
 )
 
 const createRoom = `-- name: CreateRoom :one
-INSERT INTO rooms (name, created_by, has_voice)
-VALUES ($1, $2, $3)
+INSERT INTO rooms (name, created_by, has_voice, staff_only)
+VALUES ($1, $2, $3, $4)
 RETURNING id, name, created_at, updated_at, created_by, has_voice, staff_only
 `
 
@@ -22,10 +22,16 @@ type CreateRoomParams struct {
 	Name      string      `json:"name"`
 	CreatedBy pgtype.UUID `json:"created_by"`
 	HasVoice  bool        `json:"has_voice"`
+	StaffOnly bool        `json:"staff_only"`
 }
 
 func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error) {
-	row := q.db.QueryRow(ctx, createRoom, arg.Name, arg.CreatedBy, arg.HasVoice)
+	row := q.db.QueryRow(ctx, createRoom,
+		arg.Name,
+		arg.CreatedBy,
+		arg.HasVoice,
+		arg.StaffOnly,
+	)
 	var i Room
 	err := row.Scan(
 		&i.ID,

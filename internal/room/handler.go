@@ -11,8 +11,9 @@ import (
 )
 
 type createRoomRequest struct {
-	Name     string `json:"name"`
-	HasVoice bool   `json:"has_voice"`
+	Name      string `json:"name"`
+	HasVoice  bool   `json:"has_voice"`
+	StaffOnly bool   `json:"staff_only"`
 }
 
 type updateRoomRequest struct {
@@ -86,9 +87,10 @@ func (h *Handler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := h.createRoom.Execute(r.Context(), CreateRoomInput{
-		Name:     req.Name,
-		HasVoice: req.HasVoice,
-		Claims:   claims,
+		Name:      req.Name,
+		HasVoice:  req.HasVoice,
+		StaffOnly: req.StaffOnly,
+		Claims:    claims,
 	})
 	if err != nil {
 		httpx.WriteError(w, err)

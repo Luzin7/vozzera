@@ -9,9 +9,10 @@ import (
 )
 
 type CreateRoomInput struct {
-	Name     string
-	HasVoice bool
-	Claims   httpx.UserClaims
+	Name      string
+	HasVoice  bool
+	StaffOnly bool
+	Claims    httpx.UserClaims
 }
 
 type CreateRoomOutput struct {
@@ -36,6 +37,7 @@ func (s *CreateRoomService) Execute(ctx context.Context, in CreateRoomInput) (Cr
 		Name:      in.Name,
 		CreatedBy: pgtype.UUID{Bytes: in.Claims.UserID, Valid: true},
 		HasVoice:  in.HasVoice,
+		StaffOnly: in.StaffOnly,
 	})
 	if err != nil {
 		return CreateRoomOutput{}, ErrCreateRoom(err)

@@ -9,8 +9,8 @@ FROM rooms
 WHERE id = $1;
 
 -- name: CreateRoom :one
-INSERT INTO rooms (name, created_by, has_voice)
-VALUES ($1, $2, $3)
+INSERT INTO rooms (name, created_by, has_voice, staff_only)
+VALUES ($1, $2, $3, $4)
 RETURNING id, name, created_at, updated_at, created_by, has_voice, staff_only;
 
 -- name: UpdateRoom :one
