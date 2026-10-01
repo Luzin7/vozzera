@@ -85,6 +85,69 @@ func TestHub_SubscribeEPublish(t *testing.T) {
 	}
 }
 
+func TestHub_RevokeTopicRemoveInscritos(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run()
+
+	client := NewClient(hub, nil, uuid.New(), "usuário-teste", uuid.New(), nil)
+	client.Topics = make(map[Topic]bool)
+	topic := Topic("room:" + uuid.New().String())
+
+	hub.Register(client)
+	hub.Sync(ctx)
+
+	hub.Subscribe(client, topic)
+	hub.Sync(ctx)
+
+	if !hub.topics[topic][client] {
+		t.Fatal("cliente não inscrito no tópico antes do revoke")
+	}
+
+	if err := hub.RevokeTopic(ctx, topic); err != nil {
+		t.Fatalf("RevokeTopic erro: %v", err)
+	}
+	hub.Sync(ctx)
+
+	if _, ok := hub.topics[topic]; ok {
+		t.Error("tópico deveria ter sido removido do hub")
+	}
+	if client.Topics[topic] {
+		t.Error("tópico deveria ter sido removido do cliente")
+	}
+	if !hub.clients[client] {
+		t.Error("cliente deveria continuar registrado após revoke de tópico")
+	}
+}
+
+func TestHub_SubscribeAposUnregisterNaoRessuscitaCliente(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run()
+
+	client := NewClient(hub, nil, uuid.New(), "usuário-teste", uuid.New(), nil)
+	client.Topics = make(map[Topic]bool)
+	topic := Topic("room:" + uuid.New().String())
+
+	hub.Register(client)
+	hub.Sync(ctx)
+
+	hub.Unregister(client)
+	hub.Sync(ctx)
+
+	hub.Subscribe(client, topic)
+	hub.Sync(ctx)
+
+	if _, ok := hub.topics[topic]; ok {
+		t.Error("cliente removido não deveria voltar a ser inscrito")
+	}
+	if client.Topics[topic] {
+		t.Error("tópico não deveria ser reinscrito em cliente removido")
+	}
+}
+
 func TestHub_RevokeRemoveClienteDaSessionID(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())

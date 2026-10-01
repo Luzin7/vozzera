@@ -45,30 +45,6 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (C
 	return i, err
 }
 
-const createRoom = `-- name: CreateRoom :one
-INSERT INTO rooms (name, type)
-VALUES ($1, $2)
-RETURNING id, name, type, created_at, updated_at
-`
-
-type CreateRoomParams struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-}
-
-func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (Room, error) {
-	row := q.db.QueryRow(ctx, createRoom, arg.Name, arg.Type)
-	var i Room
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Type,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const deleteMessage = `-- name: DeleteMessage :one
 UPDATE messages
 SET deleted_at = NOW(), content = NULL
@@ -99,25 +75,6 @@ func (q *Queries) DeleteMessage(ctx context.Context, arg DeleteMessageParams) (D
 		&i.UserID,
 		&i.Content,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const deleteRoom = `-- name: DeleteRoom :one
-DELETE FROM rooms
-WHERE id = $1
-RETURNING id, name, type, created_at, updated_at
-`
-
-func (q *Queries) DeleteRoom(ctx context.Context, id uuid.UUID) (Room, error) {
-	row := q.db.QueryRow(ctx, deleteRoom, id)
-	var i Room
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Type,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -175,57 +132,6 @@ func (q *Queries) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomPa
 	return items, nil
 }
 
-const getRoomByID = `-- name: GetRoomByID :one
-SELECT id, name, type, created_at, updated_at
-FROM rooms
-WHERE id = $1
-`
-
-func (q *Queries) GetRoomByID(ctx context.Context, id uuid.UUID) (Room, error) {
-	row := q.db.QueryRow(ctx, getRoomByID, id)
-	var i Room
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Type,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const listRooms = `-- name: ListRooms :many
-SELECT id, name, type, created_at, updated_at
-FROM rooms
-ORDER BY name ASC
-`
-
-func (q *Queries) ListRooms(ctx context.Context) ([]Room, error) {
-	rows, err := q.db.Query(ctx, listRooms)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Room
-	for rows.Next() {
-		var i Room
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Type,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const updateMessage = `-- name: UpdateMessage :one
 UPDATE messages
 SET content = $1, updated_at = NOW()
@@ -253,31 +159,6 @@ func (q *Queries) UpdateMessage(ctx context.Context, arg UpdateMessageParams) (U
 		&i.ID,
 		&i.RoomID,
 		&i.Content,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const updateRoom = `-- name: UpdateRoom :one
-UPDATE rooms
-SET name = $1, updated_at = NOW()
-WHERE id = $2
-RETURNING id, name, type, created_at, updated_at
-`
-
-type UpdateRoomParams struct {
-	Name string    `json:"name"`
-	ID   uuid.UUID `json:"id"`
-}
-
-func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) (Room, error) {
-	row := q.db.QueryRow(ctx, updateRoom, arg.Name, arg.ID)
-	var i Room
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Type,
-		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err

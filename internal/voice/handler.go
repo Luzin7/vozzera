@@ -4,10 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/google/uuid"
-
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
+	"github.com/google/uuid"
 )
 
 type tokenRequest struct {
@@ -15,7 +14,7 @@ type tokenRequest struct {
 }
 
 type VoiceDeps struct {
-	Repo       Repository
+	Access     VoiceRoomAccess
 	Issuer     *TokenIssuer
 	LiveKitURL string
 	AuthMW     func(http.Handler) http.Handler
@@ -26,20 +25,17 @@ type VoiceDeps struct {
 }
 
 type Handler struct {
-	token          *TokenService
-	listVoiceRooms *ListVoiceRoomsService
-	webhook        *WebhookHandler
+	token   *TokenService
+	webhook *WebhookHandler
 }
 
 func RegisterHandlers(mux *http.ServeMux, deps VoiceDeps) {
 	h := &Handler{
-		token:          NewTokenService(deps.Repo, deps.Issuer, deps.LiveKitURL),
-		listVoiceRooms: NewListVoiceRoomsService(deps.Repo),
-		webhook:        NewWebhookHandler(deps.ApiKey, deps.ApiSecret, deps.Presence, deps.Publisher),
+		token:   NewTokenService(deps.Access, deps.Issuer, deps.LiveKitURL),
+		webhook: NewWebhookHandler(deps.ApiKey, deps.ApiSecret, deps.Presence, deps.Publisher),
 	}
 
 	mux.Handle("POST /api/voice/token", deps.AuthMW(http.HandlerFunc(h.handleToken)))
-	mux.Handle("GET /api/voice/rooms", deps.AuthMW(http.HandlerFunc(h.handleListVoiceRooms)))
 	mux.Handle("POST /api/voice/webhook", http.HandlerFunc(h.webhook.Handle))
 }
 
@@ -59,9 +55,8 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := h.token.Execute(r.Context(), TokenInput{
-		UserID:   claims.UserID,
-		Username: claims.Username,
-		RoomID:   req.RoomID,
+		Claims: claims,
+		RoomID: req.RoomID,
 	})
 	if err != nil {
 		httpx.WriteError(w, err)
@@ -69,14 +64,4 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, TokenPresenter(out))
-}
-
-func (h *Handler) handleListVoiceRooms(w http.ResponseWriter, r *http.Request) {
-	out, err := h.listVoiceRooms.Execute(r.Context())
-	if err != nil {
-		httpx.WriteError(w, err)
-		return
-	}
-
-	httpx.WriteJSON(w, http.StatusOK, RoomsPresenter(out.Rooms))
 }

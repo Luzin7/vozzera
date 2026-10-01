@@ -233,6 +233,13 @@ paths:
       tags: [rooms]
       summary: Listar salas
       operationId: listRooms
+      description: Salas `staff_only` só aparecem para moderadores e administradores.
+      parameters:
+        - name: has_voice
+          in: query
+          required: false
+          schema: { type: boolean }
+          description: Quando informado, retorna apenas salas com (ou sem) capacidade de voz
       responses:
         "200":
           description: Lista de salas
@@ -255,15 +262,20 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, type]
+              required: [name]
               properties:
                 name:
                   type: string
                   minLength: 1
                   maxLength: 100
-                type:
-                  type: string
-                  enum: [text, voice]
+                has_voice:
+                  type: boolean
+                  default: false
+                  description: Capacidade de voz, imutável após a criação
+                staff_only:
+                  type: boolean
+                  default: false
+                  description: Oculta e bloqueia o acesso de usuários comuns desde a criação
       responses:
         "201":
           description: Sala criada
@@ -300,6 +312,9 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 100
+                staff_only:
+                  type: boolean
+                  description: Oculta e bloqueia o acesso de usuários comuns; ao habilitar, derruba assinaturas ativas
       responses:
         "200":
           description: Sala atualizada
@@ -455,7 +470,7 @@ paths:
 
         | type | data | Descrição |
         |------|------|-----------|
-        | `room.subscribe` | `{"room_id":"<uuid>"}` | Assinar tópico de uma sala (`room:<uuid>`). A sala precisa existir e ser do tipo `text` ou `voice`. Para salas de voz com participantes ativos, o servidor envia automaticamente `voice.presence.snapshot` com a lista de quem está na call. |
+        | `room.subscribe` | `{"room_id":"<uuid>"}` | Assinar tópico de uma sala (`room:<uuid>`). A sala precisa existir e ser acessível ao usuário (salas `staff_only` exigem `mod`/`admin`). Para salas de voz com participantes ativos, o servidor envia automaticamente `voice.presence.snapshot` com a lista de quem está na call. |
         | `room.unsubscribe` | `{"room_id":"<uuid>"}` | Sair do tópico da sala |
         | `typing.start` | `{"room_id":"<uuid>"}` | Indicar que está digitando |
         | `typing.stop` | `{"room_id":"<uuid>"}` | Indicar que parou de digitar |
@@ -524,7 +539,8 @@ paths:
           "data":{
             "id":"<uuid>",
             "name":"sala",
-            "type":"text",
+            "has_voice":false,
+            "staff_only":false,
             "created_at":"2026-08-26T12:00:00Z"
           }
         }
@@ -540,7 +556,8 @@ paths:
           "data":{
             "id":"<uuid>",
             "name":"novo-nome",
-            "type":"text",
+            "has_voice":false,
+            "staff_only":true,
             "created_at":"2026-08-26T12:00:00Z"
           }
         }
@@ -553,7 +570,7 @@ paths:
           "v":1,
           "type":"room.deleted",
           "topic":"room:<uuid>",
-          "data":{"id":"<uuid>","is_mod":false}
+          "data":{"id":"<uuid>","is_mod":true}
         }
         ```
 
@@ -664,23 +681,6 @@ paths:
           description: Evento processado
         "400":
           description: Assinatura inválida ou payload malformado
-  /api/voice/rooms:
-    get:
-      tags: [voice]
-      summary: Listar salas de voz
-      operationId: listVoiceRooms
-      description: Filtra apenas salas com type=voice.
-      responses:
-        "200":
-          description: Lista de salas de voz
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Room"
-        "401":
-          description: Não autenticado
 components:
   securitySchemes:
     cookieAuth:
@@ -694,7 +694,9 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
-        type: { type: string, enum: [text, voice] }
+        created_by: { type: string, format: uuid, nullable: true }
+        has_voice: { type: boolean }
+        staff_only: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time, nullable: true }
     Message:

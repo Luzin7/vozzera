@@ -32,9 +32,11 @@ type PasswordResetToken struct {
 type Room struct {
 	ID        uuid.UUID          `json:"id"`
 	Name      string             `json:"name"`
-	Type      string             `json:"type"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	CreatedBy pgtype.UUID        `json:"created_by"`
+	HasVoice  bool               `json:"has_voice"`
+	StaffOnly bool               `json:"staff_only"`
 }
 
 type Session struct {

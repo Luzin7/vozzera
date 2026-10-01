@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -84,7 +85,7 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		r := ws.NewRouter()
 		RegisterChatHandlers(r, ChatHandlerDeps{
 			Registerer: reg,
-			Authorizer: &fakeAuthorizer{err: ErrNotTextRoom},
+			Authorizer: &fakeAuthorizer{err: errors.New("não autorizado")},
 		})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})

@@ -11,10 +11,6 @@ const (
 
 // Eventos emitidos pelo servidor
 const (
-	EventRoomCreated = "room.created"
-	EventRoomUpdated = "room.updated"
-	EventRoomDeleted = "room.deleted"
-
 	EventMessageCreated = "message.created"
 	EventMessageUpdated = "message.updated"
 	EventMessageDeleted = "message.deleted"
