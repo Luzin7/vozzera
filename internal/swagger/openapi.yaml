@@ -272,6 +272,10 @@ paths:
                   type: boolean
                   default: false
                   description: Capacidade de voz, imutável após a criação
+                staff_only:
+                  type: boolean
+                  default: false
+                  description: Oculta e bloqueia o acesso de usuários comuns desde a criação
       responses:
         "201":
           description: Sala criada

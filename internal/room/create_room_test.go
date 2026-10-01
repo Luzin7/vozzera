@@ -64,4 +64,29 @@ func TestCreateRoomService_Execute(t *testing.T) {
 			t.Error("payload.HasVoice = false, want true")
 		}
 	})
+
+	t.Run("staff_only na criação", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.createRoom = func(_ context.Context, arg CreateRoomParams) (Room, error) {
+			return Room{ID: uuid.New(), Name: arg.Name, StaffOnly: arg.StaffOnly}, nil
+		}
+		events := &fakePublisher{}
+		svc := NewCreateRoomService(repo, events)
+
+		out, err := svc.Execute(context.Background(), CreateRoomInput{Name: "sala", StaffOnly: true, Claims: mod})
+		if err != nil {
+			t.Fatalf("Execute() erro inesperado: %v", err)
+		}
+		if !out.Room.StaffOnly {
+			t.Error("out.Room.StaffOnly = false, want true")
+		}
+
+		var payload RoomPayload
+		if err := json.Unmarshal(events.envelopes[0].Data, &payload); err != nil {
+			t.Fatalf("Unmarshal payload: %v", err)
+		}
+		if !payload.StaffOnly {
+			t.Error("payload.StaffOnly = false, want true")
+		}
+	})
 }
