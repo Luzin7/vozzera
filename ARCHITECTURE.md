@@ -43,13 +43,20 @@ Cada domínio é **auto-contido**: handler, service, queries SQL e código gerad
     models.go              # (Gerado pelo sqlc)
     queries.sql.go         # (Gerado pelo sqlc)
 
-  /voice
-    handler.go             # POST /api/voice/token e GET /api/voice/rooms
-    livekit.go             # TokenIssuer — assina JWT do LiveKit (protocol/auth, não o server-sdk)
-    queries.sql            # GetRoomByID, ListVoiceRooms
+  /room
+    handler.go             # Rotas /api/rooms* (CRUD e listagem com filtro has_voice)
+    access.go              # Política única de acesso (staff_only)
+    room_authorizer.go     # Autorização de subscribe via WebSocket
+    queries.sql            # CRUD de rooms
     db.go                  # (Gerado pelo sqlc)
     models.go              # (Gerado pelo sqlc)
     queries.sql.go         # (Gerado pelo sqlc)
+
+  /voice
+    handler.go             # POST /api/voice/token e webhook
+    livekit.go             # TokenIssuer — assina JWT do LiveKit (protocol/auth, não o server-sdk)
+    presence.go            # Presença em memória das salas de voz
+    webhook.go             # Webhook do LiveKit Cloud
 
   /shared                  # ÚNICO lugar para código compartilhado entre domínios
     /db                    # Conexão base do pgxpool
@@ -164,8 +171,9 @@ Para usar no código do domínio, basta chamar `auth.New(pool)` ou `chat.New(poo
 | Domínio    | Status       | Detalhes |
 |------------|-------------|----------|
 | **Auth**   | Funcional   | `handler.go`: register com invite code + login que cria sessão opaca (cookie HttpOnly, `SESSION_TTL` deslizante) + logout que revoga a sessão e derruba os WS da sessão. `password.go`: HashPassword, CheckPassword. Um arquivo por caso de uso, sem service-balde. Queries: `CreateUser`, `GetUserByUsername`, `InsertSession`, `GetSessionByID`, `TouchSession`, `DeleteSessionByID`, `DeleteSessionsByUser`, `CleanupExpiredSessions`. |
-| **Chat**   | Funcional   | `hub.go`: broker pattern com map + channels, singleton injetado pelo `main.go`. `client.go`: readPump/writePump com backpressure handling (ping/pong/deadlines). `handler.go`: ServeWs, `GET/POST /api/rooms`, `GET /api/rooms/{id}/messages`, `PATCH /api/rooms/{id}/messages/{content_id}` (edição com broadcast `message_edited`). Queries: `CreateMessage`, `GetMessagesByRoom`, `ListRooms`, `CreateRoom`, `UpdateMessage`. |
-| **Voice**  | Funcional   | `livekit.go`: `TokenIssuer` assina JWT do LiveKit via `protocol/auth`. `handler.go`: `POST /api/voice/token` (valida sala, exige `type=voice`, assina token) e `GET /api/voice/rooms`. Queries: `GetRoomByID`, `ListVoiceRooms`. |
+| **Room**   | Funcional   | `handler.go`: `GET/POST /api/rooms` (listagem aceita `?has_voice=`) e `PATCH/DELETE /api/rooms/{id}`. `access.go`: política única `CanAccess`/`AuthorizeVoice` com `staff_only` (mod/admin ignoram). `room_authorizer.go`: autoriza subscribe WS. Queries: `ListRooms`, `GetRoomByID`, `CreateRoom`, `UpdateRoom`, `DeleteRoom`, `GetUserRole`. |
+| **Chat**   | Funcional   | `handler_ws.go`: roteamento de WS de mensagem/typing/subscribe. `handler.go`: `GET /api/rooms/{id}/messages`, `PATCH/DELETE /api/rooms/{id}/messages/{content_id}`. Mensagens consultam `room.RoomAccess` antes de listar. Queries: `CreateMessage`, `GetMessagesByRoom`, `UpdateMessage`, `DeleteMessage`. |
+| **Voice**  | Funcional   | `livekit.go`: `TokenIssuer` assina JWT do LiveKit via `protocol/auth`. `handler.go`: `POST /api/voice/token` (delega acesso a `VoiceRoomAccess`, sem persistência própria) e webhook do LiveKit. `presence.go`/`webhook.go`: presença em memória. |
 | **Shared** | Funcional   | `config.go`: `Load()` com godotenv (`SESSION_TTL`, `SESSION_TOUCH_WINDOW`). `db.go`: `Connect()` retorna `*pgxpool.Pool`. `httpx/`: `Auth()` valida sessão no DB e põe user no context, `UserFromContext()`, `CORS()` (provisório — reflete qualquer origin, ver T2 do roadmap). |
 | **Main**   | Funcional   | Carrega config → conecta pool → cria `auth/chat/voice` queries → cria `Hub` único e dispara `go hub.Run()` → registra rotas REST/WS com middleware de auth. O `Hub` é injetado em `ServeWs` e em `chat.RegisterHandlers` — mesma instância. |
 

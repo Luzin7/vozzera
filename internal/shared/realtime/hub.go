@@ -28,7 +28,8 @@ type Hub struct {
 	subscribe   chan subscription
 	unsubscribe chan subscription
 	revoke      chan uuid.UUID
-	sync        chan struct{}
+	revokeTopic chan Topic
+	sync        chan chan struct{}
 	stop        chan struct{}
 	done        chan struct{}
 }
@@ -43,7 +44,8 @@ func NewHub() *Hub {
 		subscribe:   make(chan subscription),
 		unsubscribe: make(chan subscription),
 		revoke:      make(chan uuid.UUID),
-		sync:        make(chan struct{}),
+		revokeTopic: make(chan Topic),
+		sync:        make(chan chan struct{}),
 		stop:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
@@ -128,9 +130,22 @@ func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
 	}
 }
 
-func (h *Hub) Sync(ctx context.Context) error {
+func (h *Hub) RevokeTopic(ctx context.Context, topic Topic) error {
 	select {
-	case h.sync <- struct{}{}:
+	case h.revokeTopic <- topic:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
+	}
+}
+
+func (h *Hub) Sync(ctx context.Context) error {
+	replyChan := make(chan struct{})
+
+	select {
+	case h.sync <- replyChan:
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-h.done:
@@ -138,7 +153,7 @@ func (h *Hub) Sync(ctx context.Context) error {
 	}
 
 	select {
-	case <-h.sync:
+	case <-replyChan:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -166,7 +181,7 @@ func (h *Hub) removeClient(c *Client) {
 	c.Topics = make(map[Topic]bool)
 
 	if h.presence != nil {
-		h.presence.HandleClientDisconnected(c.UserID, c.Username)
+		go h.presence.HandleClientDisconnected(c.UserID, c.Username)
 	}
 }
 
@@ -187,8 +202,9 @@ func (h *Hub) Run() {
 
 		case client := <-h.register:
 			h.clients[client] = true
+
 			if h.presence != nil {
-				h.presence.HandleClientConnected(client.UserID, client.Username)
+				go h.presence.HandleClientConnected(client.UserID, client.Username)
 			}
 
 		case client := <-h.unregister:
@@ -201,7 +217,17 @@ func (h *Hub) Run() {
 				}
 			}
 
+		case topic := <-h.revokeTopic:
+			for client := range h.topics[topic] {
+				delete(client.Topics, topic)
+			}
+			delete(h.topics, topic)
+
 		case sub := <-h.subscribe:
+			if !h.clients[sub.client] {
+				continue
+			}
+
 			if h.topics[sub.topic] == nil {
 				h.topics[sub.topic] = make(map[*Client]bool)
 			}
@@ -229,9 +255,8 @@ func (h *Hub) Run() {
 					h.removeClient(client)
 				}
 			}
-
-		case <-h.sync:
-			h.sync <- struct{}{}
+		case replyChan := <-h.sync:
+			replyChan <- struct{}{}
 		}
 	}
 }

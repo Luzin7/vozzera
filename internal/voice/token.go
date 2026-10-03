@@ -2,16 +2,14 @@ package voice
 
 import (
 	"context"
-	"errors"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 type TokenInput struct {
-	UserID   uuid.UUID
-	Username string
-	RoomID   uuid.UUID
+	Claims httpx.UserClaims
+	RoomID uuid.UUID
 }
 
 type TokenOutput struct {
@@ -21,32 +19,25 @@ type TokenOutput struct {
 }
 
 type TokenService struct {
-	repo       Repository
+	access     VoiceRoomAccess
 	issuer     *TokenIssuer
 	liveKitURL string
 }
 
-func NewTokenService(repo Repository, issuer *TokenIssuer, liveKitURL string) *TokenService {
-	return &TokenService{repo: repo, issuer: issuer, liveKitURL: liveKitURL}
+func NewTokenService(access VoiceRoomAccess, issuer *TokenIssuer, liveKitURL string) *TokenService {
+	return &TokenService{access: access, issuer: issuer, liveKitURL: liveKitURL}
 }
 
 func (s *TokenService) Execute(ctx context.Context, in TokenInput) (TokenOutput, error) {
-	room, err := s.repo.GetRoomByID(ctx, in.RoomID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return TokenOutput{}, ErrRoomNotFound
-	}
+	roomName, err := s.access.AuthorizeVoice(ctx, in.RoomID, in.Claims)
 	if err != nil {
-		return TokenOutput{}, ErrGetRoom(err)
+		return TokenOutput{}, err
 	}
 
-	if room.Type != "voice" {
-		return TokenOutput{}, ErrNotVoiceRoom
-	}
-
-	token, err := s.issuer.IssueToken(in.UserID.String(), room.ID.String(), in.Username)
+	token, err := s.issuer.IssueToken(in.Claims.UserID.String(), in.RoomID.String(), in.Claims.Username)
 	if err != nil {
 		return TokenOutput{}, ErrIssueToken(err)
 	}
 
-	return TokenOutput{Token: token, URL: s.liveKitURL, RoomName: room.Name}, nil
+	return TokenOutput{Token: token, URL: s.liveKitURL, RoomName: roomName}, nil
 }

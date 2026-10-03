@@ -16,32 +16,6 @@ WHERE m.room_id = $1 AND m.deleted_at IS NULL
 ORDER BY m.created_at DESC
 LIMIT $2;
 
--- name: ListRooms :many
-SELECT id, name, type, created_at, updated_at
-FROM rooms
-ORDER BY name ASC;
-
--- name: GetRoomByID :one
-SELECT id, name, type, created_at, updated_at
-FROM rooms
-WHERE id = $1;
-
--- name: CreateRoom :one
-INSERT INTO rooms (name, type)
-VALUES ($1, $2)
-RETURNING id, name, type, created_at, updated_at;
-
--- name: UpdateRoom :one
-UPDATE rooms
-SET name = $1, updated_at = NOW()
-WHERE id = $2
-RETURNING id, name, type, created_at, updated_at;
-
--- name: DeleteRoom :one
-DELETE FROM rooms
-WHERE id = $1
-RETURNING id, name, type, created_at, updated_at;
-
 -- name: UpdateMessage :one
 UPDATE messages
 SET content = $1, updated_at = NOW()

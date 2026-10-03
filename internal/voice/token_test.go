@@ -5,41 +5,50 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
-func TestTokenService_Execute(t *testing.T) {
-	repo := newFakeRepo()
-	repo.getRoomByID = func(ctx context.Context, id uuid.UUID) (Room, error) {
-		return Room{ID: id, Name: "voz", Type: "voice"}, nil
-	}
+type fakeAccess struct {
+	authorizeVoice func(context.Context, uuid.UUID, httpx.UserClaims) (string, error)
+}
 
-	svc := NewTokenService(repo, NewTokenIssuer("key", "secret"), "wss://livekit")
+func (f *fakeAccess) AuthorizeVoice(ctx context.Context, roomID uuid.UUID, claims httpx.UserClaims) (string, error) {
+	return f.authorizeVoice(ctx, roomID, claims)
+}
+
+var _ VoiceRoomAccess = (*fakeAccess)(nil)
+
+func TestTokenService_Execute(t *testing.T) {
+	claims := httpx.UserClaims{UserID: uuid.New(), Username: "luand", Role: httpx.RoleUser}
 
 	t.Run("sala não é de voz", func(t *testing.T) {
-		repo.getRoomByID = func(ctx context.Context, id uuid.UUID) (Room, error) {
-			return Room{ID: id, Name: "texto", Type: "text"}, nil
-		}
-		_, err := svc.Execute(context.Background(), TokenInput{UserID: uuid.New(), Username: "luand", RoomID: uuid.New()})
-		if !errors.Is(err, ErrNotVoiceRoom) {
-			t.Errorf("erro = %v, want ErrNotVoiceRoom", err)
-		}
+		access := &fakeAccess{authorizeVoice: func(context.Context, uuid.UUID, httpx.UserClaims) (string, error) {
+			return "", httpx.Errorf(400, "Esta sala não é de voz")
+		}}
+		svc := NewTokenService(access, NewTokenIssuer("key", "secret"), "wss://livekit")
+
+		_, err := svc.Execute(context.Background(), TokenInput{Claims: claims, RoomID: uuid.New()})
+		assertStatus(t, err, 400)
 	})
 
 	t.Run("sala inexistente", func(t *testing.T) {
-		repo.getRoomByID = func(context.Context, uuid.UUID) (Room, error) { return Room{}, pgx.ErrNoRows }
-		_, err := svc.Execute(context.Background(), TokenInput{UserID: uuid.New(), Username: "luand", RoomID: uuid.New()})
-		if !errors.Is(err, ErrRoomNotFound) {
-			t.Errorf("erro = %v, want ErrRoomNotFound", err)
-		}
+		access := &fakeAccess{authorizeVoice: func(context.Context, uuid.UUID, httpx.UserClaims) (string, error) {
+			return "", httpx.Errorf(404, "Sala não encontrada")
+		}}
+		svc := NewTokenService(access, NewTokenIssuer("key", "secret"), "wss://livekit")
+
+		_, err := svc.Execute(context.Background(), TokenInput{Claims: claims, RoomID: uuid.New()})
+		assertStatus(t, err, 404)
 	})
 
 	t.Run("sucesso", func(t *testing.T) {
-		repo.getRoomByID = func(ctx context.Context, id uuid.UUID) (Room, error) {
-			return Room{ID: id, Name: "voz", Type: "voice"}, nil
-		}
-		out, err := svc.Execute(context.Background(), TokenInput{UserID: uuid.New(), Username: "luand", RoomID: uuid.New()})
+		access := &fakeAccess{authorizeVoice: func(context.Context, uuid.UUID, httpx.UserClaims) (string, error) {
+			return "voz", nil
+		}}
+		svc := NewTokenService(access, NewTokenIssuer("key", "secret"), "wss://livekit")
+
+		out, err := svc.Execute(context.Background(), TokenInput{Claims: claims, RoomID: uuid.New()})
 		if err != nil {
 			t.Fatalf("Execute() erro inesperado: %v", err)
 		}
@@ -53,4 +62,20 @@ func TestTokenService_Execute(t *testing.T) {
 			t.Errorf("room name = %q, want %q", out.RoomName, "voz")
 		}
 	})
+}
+
+func assertStatus(t *testing.T, err error, status int) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatal("esperava erro, obteve nil")
+	}
+
+	var httpErr *httpx.Error
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("erro não é do tipo *httpx.Error: %T", err)
+	}
+	if httpErr.Status != status {
+		t.Errorf("status = %d, want %d", httpErr.Status, status)
+	}
 }
