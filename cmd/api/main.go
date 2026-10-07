@@ -28,8 +28,12 @@ import (
 func main() {
 	cfg := config.Load()
 
-	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	rootCtx, stop := context.WithCancel(context.Background())
 	defer stop()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	var mailer auth.MailSender
 	m, err := sendgrid.NewSendGridMailer(sendgrid.Config{
@@ -97,11 +101,7 @@ func main() {
 	if err := presenceSvc.RefreshTotal(presenceCtx); err != nil {
 		log.Fatalf("erro ao carregar total de usuários: %v", err)
 	}
-	defer initCancel()
 
-	if err := presenceSvc.RefreshTotal(initCtx); err != nil {
-		log.Fatalf("erro ao carregar total de usuários: %v", err)
-	}
 	hub.SetPresence(presenceSvc)
 	go hub.Run()
 
@@ -129,6 +129,12 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 
 	sessionAuth := auth.NewSessionAuthenticator(authQueries, cfg.SessionTouchWindow, cfg.SessionTTL)
 
@@ -231,11 +237,13 @@ func main() {
 	}()
 
 	select {
-	case <-rootCtx.Done():
-		log.Println("Sinal de encerramento recebido. Iniciando graceful shutdown...")
+	case sig := <-sigCh:
+		log.Printf("Sinal de encerramento recebido: %s. Iniciando graceful shutdown...", sig)
 	case err := <-serverErr:
 		log.Fatalf("Erro fatal ao iniciar servidor HTTP: %v", err)
 	}
+
+	stop()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
