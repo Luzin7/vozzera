@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -50,11 +52,19 @@ func TestDeleteRoomService_Execute(t *testing.T) {
 			t.Fatalf("Execute() erro inesperado: %v", err)
 		}
 
-		if len(events.envelopes) != 1 {
-			t.Fatalf("envelopes = %d, want 1", len(events.envelopes))
+		wantTopics := []realtime.Topic{
+			realtime.Topic("room:" + roomID.String()),
+			realtime.StaffRoomListTopic,
+			realtime.MemberRoomListTopic,
 		}
-		if events.envelopes[0].Type != EventRoomDeleted {
-			t.Errorf("type = %q, want %q", events.envelopes[0].Type, EventRoomDeleted)
+		if !slices.Equal(events.topics, wantTopics) {
+			t.Fatalf("topics = %v, want %v", events.topics, wantTopics)
+		}
+		if events.envelopes[2].Type != EventRoomDeleted {
+			t.Errorf("type = %q, want %q", events.envelopes[2].Type, EventRoomDeleted)
+		}
+		if events.envelopes[2].Topic != wantTopics[0] {
+			t.Errorf("envelope topic = %q, want %q", events.envelopes[2].Topic, wantTopics[0])
 		}
 
 		var payload RoomDeletedPayload

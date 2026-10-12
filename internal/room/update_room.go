@@ -57,8 +57,7 @@ func (s *UpdateRoomService) Execute(ctx context.Context, in UpdateRoomInput) (Up
 		s.revokeSubscribers(ctx, room.ID)
 	}
 
-	topic := realtime.Topic("app:rooms")
-	if err := publishRoom(ctx, s.publisher, EventRoomUpdated, topic, room); err != nil {
+	if err := publishToRoomLists(ctx, s.publisher, EventRoomUpdated, room); err != nil {
 		return UpdateRoomOutput{}, ErrUpdateRoom(err)
 	}
 

@@ -255,7 +255,7 @@ paths:
       tags: [rooms]
       summary: Criar sala
       operationId: createRoom
-      description: Apenas moderadores e administradores criam salas. Dispara `room.created` no tópico `app:rooms`.
+      description: Apenas moderadores e administradores criam salas. Dispara `room.created` em `app:rooms:staff` e, se a sala não for `staff_only`, em `app:rooms:members`.
       requestBody:
         required: true
         content:
@@ -529,13 +529,19 @@ paths:
         }
         ```
 
+        ### Lista de salas
+        Ao conectar, cada cliente entra em um tópico de lista conforme o papel da sessão:
+        `app:rooms:staff` (mod/admin) ou `app:rooms:members` (demais). Sala `staff_only`
+        nunca é publicada com nome em `app:rooms:members`: na criação os membros não recebem
+        nada, e na edição recebem `room.deleted` para removê-la da lista.
+
         ### room.created
-        Tópico `app:rooms` — sala criada:
+        Tópicos `app:rooms:staff` e `app:rooms:members` — sala criada:
         ```json
         {
           "v":1,
           "type":"room.created",
-          "topic":"app:rooms",
+          "topic":"app:rooms:members",
           "data":{
             "id":"<uuid>",
             "name":"sala",
@@ -547,12 +553,12 @@ paths:
         ```
 
         ### room.updated
-        Tópico `room:<uuid>` — sala editada:
+        Tópicos `app:rooms:staff` e `app:rooms:members` — sala editada:
         ```json
         {
           "v":1,
           "type":"room.updated",
-          "topic":"room:<uuid>",
+          "topic":"app:rooms:staff",
           "data":{
             "id":"<uuid>",
             "name":"novo-nome",
@@ -564,7 +570,9 @@ paths:
         ```
 
         ### room.deleted
-        Tópico `room:<uuid>` — sala deletada:
+        Entregue em `room:<uuid>`, `app:rooms:staff` e `app:rooms:members` — sala deletada
+        (ou sala que virou `staff_only`, só em `app:rooms:members`, com `is_mod: false`).
+        O campo `topic` do envelope é sempre `room:<uuid>` da sala, qualquer que seja o tópico de entrega:
         ```json
         {
           "v":1,

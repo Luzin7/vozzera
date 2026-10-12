@@ -43,8 +43,7 @@ func (s *CreateRoomService) Execute(ctx context.Context, in CreateRoomInput) (Cr
 		return CreateRoomOutput{}, ErrCreateRoom(err)
 	}
 
-	topic := realtime.Topic("app:rooms")
-	if err := publishRoom(ctx, s.publisher, EventRoomCreated, topic, room); err != nil {
+	if err := publishToRoomLists(ctx, s.publisher, EventRoomCreated, room); err != nil {
 		return CreateRoomOutput{}, ErrCreateRoom(err)
 	}
 
