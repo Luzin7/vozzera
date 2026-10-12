@@ -18,11 +18,15 @@ type Repository interface {
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error
 	InsertPasswordResetToken(ctx context.Context, arg InsertPasswordResetTokenParams) (PasswordResetToken, error)
-	GetPasswordResetTokenByHash(ctx context.Context, tokenHash string) (GetPasswordResetTokenByHashRow, error)
+	ConsumePasswordResetToken(ctx context.Context, tokenHash string) (uuid.UUID, error)
 	DeletePasswordResetTokensByUser(ctx context.Context, userID uuid.UUID) error
 	CleanupExpiredPasswordResetTokens(ctx context.Context) error
 	GetSessionByID(ctx context.Context, id uuid.UUID) (GetSessionByIDRow, error)
 	TouchSession(ctx context.Context, arg TouchSessionParams) error
+}
+
+type Transactor interface {
+	WithinTx(ctx context.Context, fn func(Repository) error) error
 }
 
 type SessionRevoker interface {

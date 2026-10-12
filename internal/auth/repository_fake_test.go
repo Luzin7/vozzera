@@ -23,7 +23,7 @@ type fakeRepo struct {
 	updateUserPassword                func(context.Context, UpdateUserPasswordParams) error
 	updateUserEmail                   func(context.Context, UpdateUserEmailParams) error
 	insertPasswordResetToken          func(context.Context, InsertPasswordResetTokenParams) (PasswordResetToken, error)
-	getPasswordResetTokenByHash       func(context.Context, string) (GetPasswordResetTokenByHashRow, error)
+	consumePasswordResetToken         func(context.Context, string) (uuid.UUID, error)
 	deletePasswordResetTokensByUser   func(context.Context, uuid.UUID) error
 	cleanupExpiredPasswordResetTokens func(context.Context) error
 	getSessionByID                    func(context.Context, uuid.UUID) (GetSessionByIDRow, error)
@@ -65,8 +65,8 @@ func newFakeRepo() *fakeRepo {
 		insertPasswordResetToken: func(context.Context, InsertPasswordResetTokenParams) (PasswordResetToken, error) {
 			return PasswordResetToken{}, errors.New("insertPasswordResetToken não configurado")
 		},
-		getPasswordResetTokenByHash: func(context.Context, string) (GetPasswordResetTokenByHashRow, error) {
-			return GetPasswordResetTokenByHashRow{}, errors.New("getPasswordResetTokenByHash não configurado")
+		consumePasswordResetToken: func(context.Context, string) (uuid.UUID, error) {
+			return uuid.Nil, errors.New("consumePasswordResetToken não configurado")
 		},
 		deletePasswordResetTokensByUser: func(context.Context, uuid.UUID) error {
 			return errors.New("deletePasswordResetTokensByUser não configurado")
@@ -121,8 +121,8 @@ func (f *fakeRepo) InsertPasswordResetToken(ctx context.Context, arg InsertPassw
 	return f.insertPasswordResetToken(ctx, arg)
 }
 
-func (f *fakeRepo) GetPasswordResetTokenByHash(ctx context.Context, tokenHash string) (GetPasswordResetTokenByHashRow, error) {
-	return f.getPasswordResetTokenByHash(ctx, tokenHash)
+func (f *fakeRepo) ConsumePasswordResetToken(ctx context.Context, tokenHash string) (uuid.UUID, error) {
+	return f.consumePasswordResetToken(ctx, tokenHash)
 }
 
 func (f *fakeRepo) DeletePasswordResetTokensByUser(ctx context.Context, userID uuid.UUID) error {

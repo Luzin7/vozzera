@@ -36,11 +36,10 @@ INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
 VALUES ($1, $2, $3)
 RETURNING id, user_id, token_hash, expires_at, created_at;
 
--- name: GetPasswordResetTokenByHash :one
-SELECT id, user_id, expires_at
-FROM password_reset_tokens
+-- name: ConsumePasswordResetToken :one
+DELETE FROM password_reset_tokens
 WHERE token_hash = $1 AND expires_at > NOW()
-LIMIT 1;
+RETURNING user_id;
 
 -- name: DeletePasswordResetTokensByUser :exec
 DELETE FROM password_reset_tokens WHERE user_id = $1;

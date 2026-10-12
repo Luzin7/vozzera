@@ -170,6 +170,7 @@ func main() {
 
 	auth.RegisterHandlers(mux, auth.AuthDeps{
 		Repo:             authQueries,
+		Transactor:       auth.NewPgTransactor(pool),
 		InviteCode:       cfg.InviteCode,
 		SessionTTL:       cfg.SessionTTL,
 		PasswordResetTTL: cfg.PasswordResetTTL,
