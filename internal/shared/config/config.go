@@ -27,6 +27,7 @@ type Config struct {
 	SessionTouchWindow time.Duration
 	PasswordResetTTL   time.Duration
 	AppURL             string
+	ClientIPHeader     string
 	SendGridConfig     SendGridConfig
 }
 
@@ -50,6 +51,7 @@ func Load() *Config {
 		SessionTouchWindow: durationEnv("SESSION_TOUCH_WINDOW", 24*time.Hour),
 		PasswordResetTTL:   durationEnv("PASSWORD_RESET_TTL", 30*time.Minute),
 		AppURL:             os.Getenv("APP_URL"),
+		ClientIPHeader:     strings.TrimSpace(os.Getenv("CLIENT_IP_HEADER")),
 		SendGridConfig: SendGridConfig{
 			APIKey:      os.Getenv("SENDGRID_API_KEY"),
 			FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
