@@ -14,7 +14,6 @@ import (
 )
 
 type UpdateMessageInput struct {
-	RoomID    uuid.UUID
 	ContentID uuid.UUID
 	UserID    uuid.UUID
 	Content   string
@@ -55,7 +54,7 @@ func (s *UpdateMessageService) Execute(ctx context.Context, in UpdateMessageInpu
 
 	payload := MessageUpdatedPayload{
 		ContentID: in.ContentID,
-		RoomID:    in.RoomID,
+		RoomID:    msg.RoomID,
 		UserID:    in.UserID,
 		Content:   in.Content,
 	}
@@ -64,7 +63,7 @@ func (s *UpdateMessageService) Execute(ctx context.Context, in UpdateMessageInpu
 		return UpdateMessageOutput{}, ErrUpdateMessage(err)
 	}
 
-	topic := realtime.Topic(fmt.Sprintf("room:%s", in.RoomID.String()))
+	topic := realtime.Topic(fmt.Sprintf("room:%s", msg.RoomID.String()))
 
 	env := realtime.Envelope{
 		V:     1,

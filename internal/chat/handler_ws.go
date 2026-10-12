@@ -31,10 +31,8 @@ func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
 			return nil
 		}
 		topic := realtime.Topic("room:" + cmd.RoomID.String())
-		if deps.Authorizer != nil {
-			if err := deps.Authorizer.CanSubscribe(ctx, c.UserID.String(), topic); err != nil {
-				return nil
-			}
+		if !canUseRoom(ctx, deps, c, topic) {
+			return nil
 		}
 		deps.Registerer.Subscribe(c, topic)
 
@@ -84,6 +82,9 @@ func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
 		if cmd.RoomID == uuid.Nil || cmd.Content == "" {
 			return nil
 		}
+		if !canUseRoom(ctx, deps, c, realtime.Topic("room:"+cmd.RoomID.String())) {
+			return nil
+		}
 		ctxMsg, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		_, err := deps.Sender.Execute(ctxMsg, SendMessageInput{
@@ -104,6 +105,9 @@ func handleTyping(ctx context.Context, c *realtime.Client, typingType string, da
 		return nil
 	}
 	topic := realtime.Topic("room:" + cmd.RoomID.String())
+	if !canUseRoom(ctx, deps, c, topic) {
+		return nil
+	}
 	typingData, _ := json.Marshal(map[string]interface{}{
 		"user_id":  c.UserID,
 		"username": c.Username,
@@ -117,4 +121,11 @@ func handleTyping(ctx context.Context, c *realtime.Client, typingType string, da
 	}
 
 	return deps.Publisher.Publish(ctx, topic, env)
+}
+
+func canUseRoom(ctx context.Context, deps ChatHandlerDeps, c *realtime.Client, topic realtime.Topic) bool {
+	if deps.Authorizer == nil {
+		return false
+	}
+	return deps.Authorizer.CanSubscribe(ctx, c.UserID.String(), topic) == nil
 }
