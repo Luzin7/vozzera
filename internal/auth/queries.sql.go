@@ -56,12 +56,12 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
-const deletePasswordResetToken = `-- name: DeletePasswordResetToken :exec
-DELETE FROM password_reset_tokens WHERE id = $1
+const deletePasswordResetTokensByUser = `-- name: DeletePasswordResetTokensByUser :exec
+DELETE FROM password_reset_tokens WHERE user_id = $1
 `
 
-func (q *Queries) DeletePasswordResetToken(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deletePasswordResetToken, id)
+func (q *Queries) DeletePasswordResetTokensByUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deletePasswordResetTokensByUser, userID)
 	return err
 }
 

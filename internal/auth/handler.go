@@ -62,7 +62,7 @@ func RegisterHandlers(mux *http.ServeMux, deps AuthDeps) {
 		logout:               NewLogoutService(deps.Repo, deps.Revoker),
 		updateEmail:          NewUpdateEmailService(deps.Repo),
 		requestPasswordReset: NewRequestPasswordResetService(deps.Repo, deps.Mailer, deps.AppURL, deps.PasswordResetTTL),
-		resetPassword:        NewResetPasswordService(deps.Repo),
+		resetPassword:        NewResetPasswordService(deps.Repo, deps.Revoker),
 	}
 
 	mux.HandleFunc("POST /api/register", h.handleRegister)

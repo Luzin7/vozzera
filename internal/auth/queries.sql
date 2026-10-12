@@ -42,8 +42,8 @@ FROM password_reset_tokens
 WHERE token_hash = $1 AND expires_at > NOW()
 LIMIT 1;
 
--- name: DeletePasswordResetToken :exec
-DELETE FROM password_reset_tokens WHERE id = $1;
+-- name: DeletePasswordResetTokensByUser :exec
+DELETE FROM password_reset_tokens WHERE user_id = $1;
 
 -- name: CleanupExpiredPasswordResetTokens :exec
 DELETE FROM password_reset_tokens WHERE expires_at < NOW();

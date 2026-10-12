@@ -248,3 +248,31 @@ func TestHub_UnregisterFechaComNormalClosure(t *testing.T) {
 		t.Errorf("closeCode = %d, want %d", client.closeCode, websocket.CloseNormalClosure)
 	}
 }
+
+func TestHub_RevokeUserRemoveTodosOsClientesDoUsuario(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run()
+
+	userID := uuid.New()
+	laptop := NewClient(hub, nil, userID, "alice", uuid.New(), nil)
+	phone := NewClient(hub, nil, userID, "alice", uuid.New(), nil)
+	other := NewClient(hub, nil, uuid.New(), "bob", uuid.New(), nil)
+
+	hub.Register(laptop)
+	hub.Register(phone)
+	hub.Register(other)
+	hub.RevokeUser(ctx, userID)
+	hub.Sync(ctx)
+
+	if hub.clients[laptop] || hub.clients[phone] {
+		t.Error("clientes do usuário deveriam ter sido removidos")
+	}
+	if laptop.closeCode != CloseSessionRevoked || phone.closeCode != CloseSessionRevoked {
+		t.Errorf("closeCode = %d e %d, want %d", laptop.closeCode, phone.closeCode, CloseSessionRevoked)
+	}
+	if !hub.clients[other] {
+		t.Error("cliente de outro usuário deveria permanecer registrado")
+	}
+}

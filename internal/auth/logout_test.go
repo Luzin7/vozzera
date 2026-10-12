@@ -8,11 +8,17 @@ import (
 )
 
 type revokeRecorder struct {
-	revoked uuid.UUID
+	revoked     uuid.UUID
+	revokedUser uuid.UUID
 }
 
 func (r *revokeRecorder) Revoke(_ context.Context, sessionID uuid.UUID) error {
 	r.revoked = sessionID
+	return nil
+}
+
+func (r *revokeRecorder) RevokeUser(_ context.Context, userID uuid.UUID) error {
+	r.revokedUser = userID
 	return nil
 }
 

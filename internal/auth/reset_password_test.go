@@ -10,14 +10,14 @@ import (
 )
 
 func TestResetPasswordService_Execute_InvalidToken(t *testing.T) {
-	svc := NewResetPasswordService(newFakeRepo())
+	svc := NewResetPasswordService(newFakeRepo(), &revokeRecorder{})
 
 	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "", Password: "secret123"})
 	assertStatus(t, err, http.StatusBadRequest)
 }
 
 func TestResetPasswordService_Execute_InvalidPassword(t *testing.T) {
-	svc := NewResetPasswordService(newFakeRepo())
+	svc := NewResetPasswordService(newFakeRepo(), &revokeRecorder{})
 
 	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "abc", Password: "short"})
 	assertStatus(t, err, http.StatusBadRequest)
@@ -29,7 +29,7 @@ func TestResetPasswordService_Execute_TokenNotFound(t *testing.T) {
 		return GetPasswordResetTokenByHashRow{}, pgx.ErrNoRows
 	}
 
-	svc := NewResetPasswordService(repo)
+	svc := NewResetPasswordService(repo, &revokeRecorder{})
 
 	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "abc", Password: "secret123"})
 	assertStatus(t, err, http.StatusBadRequest)
@@ -50,9 +50,9 @@ func TestResetPasswordService_Execute_Success(t *testing.T) {
 		return nil
 	}
 
-	var deletedToken uuid.UUID
-	repo.deletePasswordResetToken = func(ctx context.Context, id uuid.UUID) error {
-		deletedToken = id
+	var tokensDeletedFor uuid.UUID
+	repo.deletePasswordResetTokensByUser = func(ctx context.Context, userID uuid.UUID) error {
+		tokensDeletedFor = userID
 		return nil
 	}
 
@@ -62,7 +62,8 @@ func TestResetPasswordService_Execute_Success(t *testing.T) {
 		return nil
 	}
 
-	svc := NewResetPasswordService(repo)
+	revoker := &revokeRecorder{}
+	svc := NewResetPasswordService(repo, revoker)
 
 	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "abc123", Password: "newsecret123"})
 	if err != nil {
@@ -75,10 +76,13 @@ func TestResetPasswordService_Execute_Success(t *testing.T) {
 	if err := CheckPassword(updated.PasswordHash, "newsecret123"); err != nil {
 		t.Error("senha não foi hashada corretamente")
 	}
-	if deletedToken != tokenID {
-		t.Errorf("token apagado = %v, want %v", deletedToken, tokenID)
+	if tokensDeletedFor != userID {
+		t.Errorf("tokens apagados de %v, want %v", tokensDeletedFor, userID)
 	}
 	if revokedUser != userID {
 		t.Errorf("sessões revogadas de %v, want %v", revokedUser, userID)
+	}
+	if revoker.revokedUser != userID {
+		t.Errorf("websockets revogados de %v, want %v", revoker.revokedUser, userID)
 	}
 }

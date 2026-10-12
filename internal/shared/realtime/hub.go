@@ -29,6 +29,7 @@ type Hub struct {
 	subscribe   chan subscription
 	unsubscribe chan subscription
 	revoke      chan uuid.UUID
+	revokeUser  chan uuid.UUID
 	revokeTopic chan Topic
 	sync        chan chan struct{}
 	stop        chan struct{}
@@ -45,6 +46,7 @@ func NewHub() *Hub {
 		subscribe:   make(chan subscription),
 		unsubscribe: make(chan subscription),
 		revoke:      make(chan uuid.UUID),
+		revokeUser:  make(chan uuid.UUID),
 		revokeTopic: make(chan Topic),
 		sync:        make(chan chan struct{}),
 		stop:        make(chan struct{}),
@@ -123,6 +125,17 @@ func (h *Hub) Unregister(c *Client) {
 func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
 	select {
 	case h.revoke <- sessionID:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
+	}
+}
+
+func (h *Hub) RevokeUser(ctx context.Context, userID uuid.UUID) error {
+	select {
+	case h.revokeUser <- userID:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -215,6 +228,13 @@ func (h *Hub) Run() {
 		case sessionID := <-h.revoke:
 			for client := range h.clients {
 				if client.SessionID == sessionID {
+					h.removeClient(client, CloseSessionRevoked)
+				}
+			}
+
+		case userID := <-h.revokeUser:
+			for client := range h.clients {
+				if client.UserID == userID {
 					h.removeClient(client, CloseSessionRevoked)
 				}
 			}

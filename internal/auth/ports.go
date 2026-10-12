@@ -19,7 +19,7 @@ type Repository interface {
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error
 	InsertPasswordResetToken(ctx context.Context, arg InsertPasswordResetTokenParams) (PasswordResetToken, error)
 	GetPasswordResetTokenByHash(ctx context.Context, tokenHash string) (GetPasswordResetTokenByHashRow, error)
-	DeletePasswordResetToken(ctx context.Context, id uuid.UUID) error
+	DeletePasswordResetTokensByUser(ctx context.Context, userID uuid.UUID) error
 	CleanupExpiredPasswordResetTokens(ctx context.Context) error
 	GetSessionByID(ctx context.Context, id uuid.UUID) (GetSessionByIDRow, error)
 	TouchSession(ctx context.Context, arg TouchSessionParams) error
@@ -27,6 +27,7 @@ type Repository interface {
 
 type SessionRevoker interface {
 	Revoke(ctx context.Context, sessionID uuid.UUID) error
+	RevokeUser(ctx context.Context, userID uuid.UUID) error
 }
 
 type MailSender interface {

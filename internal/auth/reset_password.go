@@ -15,11 +15,12 @@ type ResetPasswordInput struct {
 type ResetPasswordOutput struct{}
 
 type ResetPasswordService struct {
-	repo Repository
+	repo    Repository
+	revoker SessionRevoker
 }
 
-func NewResetPasswordService(repo Repository) *ResetPasswordService {
-	return &ResetPasswordService{repo: repo}
+func NewResetPasswordService(repo Repository, revoker SessionRevoker) *ResetPasswordService {
+	return &ResetPasswordService{repo: repo, revoker: revoker}
 }
 
 func (s *ResetPasswordService) Execute(ctx context.Context, in ResetPasswordInput) (ResetPasswordOutput, error) {
@@ -51,11 +52,15 @@ func (s *ResetPasswordService) Execute(ctx context.Context, in ResetPasswordInpu
 		return ResetPasswordOutput{}, ErrResetPassword(err)
 	}
 
-	if err := s.repo.DeletePasswordResetToken(ctx, token.ID); err != nil {
+	if err := s.repo.DeletePasswordResetTokensByUser(ctx, token.UserID); err != nil {
 		return ResetPasswordOutput{}, ErrResetPassword(err)
 	}
 
 	if err := s.repo.DeleteSessionsByUser(ctx, token.UserID); err != nil {
+		return ResetPasswordOutput{}, ErrResetPassword(err)
+	}
+
+	if err := s.revoker.RevokeUser(ctx, token.UserID); err != nil {
 		return ResetPasswordOutput{}, ErrResetPassword(err)
 	}
 
