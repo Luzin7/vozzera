@@ -17,6 +17,8 @@ const (
 	maxMessageSize = 4096
 )
 
+const CloseSessionRevoked = 4001
+
 type Client struct {
 	registerer Registerer
 	conn       *websocket.Conn
@@ -28,6 +30,7 @@ type Client struct {
 	Handler    InboundHandler
 	context    context.Context
 	ctxCancel  context.CancelFunc
+	closeCode  int
 }
 
 func NewClient(registerer Registerer, conn *websocket.Conn, userID uuid.UUID, username string, sessionID uuid.UUID, handler InboundHandler) *Client {
@@ -103,7 +106,7 @@ func (c *Client) WritePump() {
 		case message, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(c.closeCode, ""))
 				return
 			}
 

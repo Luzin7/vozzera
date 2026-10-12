@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 func TestHub_Register(t *testing.T) {
@@ -172,5 +173,78 @@ func TestHub_RevokeRemoveClienteDaSessionID(t *testing.T) {
 	}
 	if !hub.clients[client2] {
 		t.Error("client2 deveria permanecer registrado")
+	}
+}
+
+func TestHub_RevokeFechaComCodigoDeSessaoRevogada(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run()
+
+	sessionID := uuid.New()
+	client := NewClient(hub, nil, uuid.New(), "alice", sessionID, nil)
+
+	hub.Register(client)
+	hub.Revoke(ctx, sessionID)
+	hub.Sync(ctx)
+
+	if client.closeCode != CloseSessionRevoked {
+		t.Errorf("closeCode = %d, want %d", client.closeCode, CloseSessionRevoked)
+	}
+}
+
+func TestHub_ShutdownFechaComGoingAway(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	client := NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil)
+	hub.Register(client)
+
+	if err := hub.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown erro: %v", err)
+	}
+
+	if client.closeCode != websocket.CloseGoingAway {
+		t.Errorf("closeCode = %d, want %d", client.closeCode, websocket.CloseGoingAway)
+	}
+}
+
+func TestHub_ClienteLentoFechaComTryAgainLater(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run()
+
+	client := NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil)
+	topic := Topic("room:" + uuid.New().String())
+	hub.Register(client)
+	hub.Subscribe(client, topic)
+	hub.Sync(ctx)
+
+	for range cap(client.send) {
+		client.send <- []byte("{}")
+	}
+	hub.Publish(ctx, topic, Envelope{V: 1, Type: "test", Topic: topic, TS: time.Now()})
+	hub.Sync(ctx)
+
+	if client.closeCode != websocket.CloseTryAgainLater {
+		t.Errorf("closeCode = %d, want %d", client.closeCode, websocket.CloseTryAgainLater)
+	}
+}
+
+func TestHub_UnregisterFechaComNormalClosure(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run()
+
+	client := NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil)
+	hub.Register(client)
+	hub.Unregister(client)
+	hub.Sync(ctx)
+
+	if client.closeCode != websocket.CloseNormalClosure {
+		t.Errorf("closeCode = %d, want %d", client.closeCode, websocket.CloseNormalClosure)
 	}
 }

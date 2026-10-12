@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 type subscription struct {
@@ -162,12 +163,13 @@ func (h *Hub) Sync(ctx context.Context) error {
 	}
 }
 
-func (h *Hub) removeClient(c *Client) {
+func (h *Hub) removeClient(c *Client, closeCode int) {
 	if _, ok := h.clients[c]; !ok {
 		return
 	}
 
 	delete(h.clients, c)
+	c.closeCode = closeCode
 	close(c.send)
 
 	for topic := range c.Topics {
@@ -187,7 +189,7 @@ func (h *Hub) removeClient(c *Client) {
 
 func (h *Hub) drain() {
 	for client := range h.clients {
-		h.removeClient(client)
+		h.removeClient(client, websocket.CloseGoingAway)
 	}
 }
 
@@ -208,12 +210,12 @@ func (h *Hub) Run() {
 			}
 
 		case client := <-h.unregister:
-			h.removeClient(client)
+			h.removeClient(client, websocket.CloseNormalClosure)
 
 		case sessionID := <-h.revoke:
 			for client := range h.clients {
 				if client.SessionID == sessionID {
-					h.removeClient(client)
+					h.removeClient(client, CloseSessionRevoked)
 				}
 			}
 
@@ -252,7 +254,7 @@ func (h *Hub) Run() {
 				select {
 				case client.send <- payload.data:
 				default:
-					h.removeClient(client)
+					h.removeClient(client, websocket.CloseTryAgainLater)
 				}
 			}
 		case replyChan := <-h.sync:
