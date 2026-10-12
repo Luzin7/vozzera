@@ -115,15 +115,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_token",
-		Value:    out.SessionID.String(),
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteNoneMode,
-		MaxAge:   int(time.Until(out.ExpiresAt).Seconds()),
-	})
+	setSessionCookie(w, out.SessionID, out.ExpiresAt)
 
 	httpx.WriteJSON(w, http.StatusOK, LoginPresenter(out))
 }
@@ -183,15 +175,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_token",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteNoneMode,
-		MaxAge:   -1,
-	})
+	clearSessionCookies(w)
 
 	w.WriteHeader(http.StatusNoContent)
 }
