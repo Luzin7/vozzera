@@ -16,12 +16,12 @@ type DeleteRoomInput struct {
 }
 
 type DeleteRoomService struct {
-	repo      Repository
-	publisher realtime.Publisher
+	repo   Repository
+	events roomEventPublisher
 }
 
 func NewDeleteRoomService(repo Repository, publisher realtime.Publisher) *DeleteRoomService {
-	return &DeleteRoomService{repo: repo, publisher: publisher}
+	return &DeleteRoomService{repo: repo, events: roomEventPublisher{publisher: publisher}}
 }
 
 func (s *DeleteRoomService) Execute(ctx context.Context, in DeleteRoomInput) error {
@@ -37,16 +37,8 @@ func (s *DeleteRoomService) Execute(ctx context.Context, in DeleteRoomInput) err
 		return ErrDeleteRoom(err)
 	}
 
-	payload := RoomDeletedPayload{ID: in.ID, IsMod: true}
-	topics := []realtime.Topic{
-		roomTopic(in.ID),
-		realtime.StaffRoomListTopic,
-		realtime.MemberRoomListTopic,
-	}
-	for _, topic := range topics {
-		if err := publishRoomDeleted(ctx, s.publisher, topic, payload); err != nil {
-			return ErrDeleteRoom(err)
-		}
+	if err := s.events.deleted(ctx, in.ID); err != nil {
+		return ErrDeleteRoom(err)
 	}
 	return nil
 }

@@ -27,13 +27,13 @@ type UpdateRoomOutput struct {
 }
 
 type UpdateRoomService struct {
-	repo      Repository
-	publisher realtime.Publisher
-	revoker   TopicRevoker
+	repo    Repository
+	events  roomEventPublisher
+	revoker TopicRevoker
 }
 
 func NewUpdateRoomService(repo Repository, publisher realtime.Publisher, revoker TopicRevoker) *UpdateRoomService {
-	return &UpdateRoomService{repo: repo, publisher: publisher, revoker: revoker}
+	return &UpdateRoomService{repo: repo, events: roomEventPublisher{publisher: publisher}, revoker: revoker}
 }
 
 func (s *UpdateRoomService) Execute(ctx context.Context, in UpdateRoomInput) (UpdateRoomOutput, error) {
@@ -57,7 +57,7 @@ func (s *UpdateRoomService) Execute(ctx context.Context, in UpdateRoomInput) (Up
 		s.revokeSubscribers(ctx, room.ID)
 	}
 
-	if err := publishToRoomLists(ctx, s.publisher, EventRoomUpdated, room); err != nil {
+	if err := s.events.updated(ctx, room); err != nil {
 		return UpdateRoomOutput{}, ErrUpdateRoom(err)
 	}
 
@@ -68,7 +68,7 @@ func (s *UpdateRoomService) revokeSubscribers(ctx context.Context, roomID uuid.U
 	if s.revoker == nil {
 		return
 	}
-	s.revoker.RevokeTopic(ctx, realtime.Topic("room:"+roomID.String()))
+	s.revoker.RevokeTopic(ctx, realtime.RoomTopic(roomID))
 }
 
 func toPgBool(value *bool) pgtype.Bool {
