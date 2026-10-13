@@ -13,10 +13,14 @@ import (
 type fakeTransactor struct {
 	repo Repository
 	runs int
+	err  error
 }
 
 func (f *fakeTransactor) WithinTx(_ context.Context, fn func(Repository) error) error {
 	f.runs++
+	if f.err != nil {
+		return f.err
+	}
 	return fn(f.repo)
 }
 
@@ -119,7 +123,7 @@ func TestResetPasswordService_Execute_Success(t *testing.T) {
 	}
 }
 
-func TestResetPasswordService_Execute_FailureMidwayKeepsSessionsAlive(t *testing.T) {
+func TestResetPasswordService_Execute_FailureDoesNotRevokeSockets(t *testing.T) {
 	repo := successfulResetRepo(uuid.New())
 	repo.deleteSessionsByUser = func(context.Context, uuid.UUID) error {
 		return errors.New("falha ao apagar sessões")
@@ -132,5 +136,38 @@ func TestResetPasswordService_Execute_FailureMidwayKeepsSessionsAlive(t *testing
 
 	if revoker.revokedUser != uuid.Nil {
 		t.Errorf("websockets revogados de %v numa redefinição que falhou", revoker.revokedUser)
+	}
+}
+
+func TestResetPasswordService_Execute_TransactionFailureIsNamedError(t *testing.T) {
+	transactor := &fakeTransactor{repo: successfulResetRepo(uuid.New()), err: errors.New("commit: conn closed")}
+	svc := NewResetPasswordService(transactor, &revokeRecorder{})
+
+	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "abc123", Password: "newsecret123"})
+	assertStatus(t, err, http.StatusInternalServerError)
+}
+
+func TestResetPasswordService_Execute_RevokeFailureStillSucceeds(t *testing.T) {
+	svc := NewResetPasswordService(
+		&fakeTransactor{repo: successfulResetRepo(uuid.New())},
+		&revokeRecorder{err: errors.New("hub encerrado")},
+	)
+
+	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "abc123", Password: "newsecret123"})
+	if err != nil {
+		t.Fatalf("Execute() erro inesperado: %v", err)
+	}
+}
+
+func TestResetPasswordService_Execute_RevokesAfterRequestIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	revoker := &revokeRecorder{}
+	svc := NewResetPasswordService(&fakeTransactor{repo: successfulResetRepo(uuid.New())}, revoker)
+
+	_, _ = svc.Execute(ctx, ResetPasswordInput{Token: "abc123", Password: "newsecret123"})
+
+	if revoker.ctxErr != nil {
+		t.Errorf("revogação rodou com o contexto da requisição cancelado: %v", revoker.ctxErr)
 	}
 }

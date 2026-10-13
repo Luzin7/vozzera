@@ -46,17 +46,17 @@ func (s *ResetPasswordService) Execute(ctx context.Context, in ResetPasswordInpu
 	change := passwordChange{tokenHash: hashResetToken(in.Token), passwordHash: hashedPassword}
 	var userID uuid.UUID
 	err = s.transactor.WithinTx(ctx, func(repo Repository) error {
-		var applyErr error
-		userID, applyErr = applyPasswordChange(ctx, repo, change)
-		return applyErr
+		id, err := applyPasswordChange(ctx, repo, change)
+		userID = id
+		return err
 	})
 	if err != nil {
-		return ResetPasswordOutput{}, err
-	}
-
-	if err := s.revoker.RevokeUser(ctx, userID); err != nil {
 		return ResetPasswordOutput{}, ErrResetPassword(err)
 	}
+
+	revokeSocketsDetached(ctx, func(revokeCtx context.Context) error {
+		return s.revoker.RevokeUser(revokeCtx, userID)
+	})
 
 	return ResetPasswordOutput{}, nil
 }

@@ -26,7 +26,7 @@ func newAuthMux(t *testing.T, repo *fakeRepo) *http.ServeMux {
 	return mux
 }
 
-func TestHandleLogin_CookieParticionadoEApagaVersaoAntiga(t *testing.T) {
+func TestHandleLogin_SetsPartitionedCookieAndExpiresLegacyOne(t *testing.T) {
 	hash, err := HashPassword("secret123")
 	if err != nil {
 		t.Fatalf("HashPassword() erro inesperado: %v", err)
@@ -59,12 +59,12 @@ func TestHandleLogin_CookieParticionadoEApagaVersaoAntiga(t *testing.T) {
 	}
 }
 
-func TestHandleLogout_ApagaAsDuasVersoesDoCookie(t *testing.T) {
+func TestHandleLogout_ExpiresBothCookieVariants(t *testing.T) {
 	repo := newFakeRepo()
 	repo.deleteSessionByID = func(context.Context, uuid.UUID) error { return nil }
 
 	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
-	req.AddCookie(&http.Cookie{Name: "auth_token", Value: uuid.New().String()})
+	req.AddCookie(&http.Cookie{Name: httpx.SessionCookieName, Value: uuid.New().String()})
 	w := httptest.NewRecorder()
 	newAuthMux(t, repo).ServeHTTP(w, req)
 

@@ -24,8 +24,8 @@ func (s *LogoutService) Execute(ctx context.Context, in LogoutInput) error {
 		return ErrRevokeSession(err)
 	}
 
-	if err := s.revoker.Revoke(ctx, in.SessionID); err != nil {
-		return ErrRevokeSession(err)
-	}
+	revokeSocketsDetached(ctx, func(revokeCtx context.Context) error {
+		return s.revoker.Revoke(revokeCtx, in.SessionID)
+	})
 	return nil
 }
