@@ -38,16 +38,19 @@ func TestUpdateMessageService_Execute(t *testing.T) {
 		}
 	})
 
-	t.Run("publica na sala da mensagem gravada no banco", func(t *testing.T) {
-		realRoomID := uuid.New()
+	t.Run("consulta e publica na sala da URL", func(t *testing.T) {
+		roomID := uuid.New()
 		repo := newFakeRepo()
+		var queriedRoom uuid.UUID
 		repo.updateMessage = func(ctx context.Context, arg UpdateMessageParams) (UpdateMessageRow, error) {
-			return UpdateMessageRow{ID: arg.ID, RoomID: realRoomID}, nil
+			queriedRoom = arg.RoomID
+			return UpdateMessageRow{ID: arg.ID, RoomID: arg.RoomID}, nil
 		}
 		events := &fakePublisher{}
 		svc := NewUpdateMessageService(repo, events)
 
 		_, err := svc.Execute(context.Background(), UpdateMessageInput{
+			RoomID:    roomID,
 			ContentID: uuid.New(),
 			UserID:    uuid.New(),
 			Content:   "editado",
@@ -56,16 +59,21 @@ func TestUpdateMessageService_Execute(t *testing.T) {
 			t.Fatalf("Execute() erro inesperado: %v", err)
 		}
 
-		wantTopic := realtime.Topic("room:" + realRoomID.String())
-		if events.topics[0] != wantTopic {
-			t.Errorf("topic = %q, want %q", events.topics[0], wantTopic)
+		if queriedRoom != roomID {
+			t.Errorf("consulta na sala %v, want %v", queriedRoom, roomID)
+		}
+		if len(events.topics) != 1 {
+			t.Fatalf("eventos publicados = %d, want 1", len(events.topics))
+		}
+		if events.topics[0] != realtime.RoomTopic(roomID) {
+			t.Errorf("topic = %q, want %q", events.topics[0], realtime.RoomTopic(roomID))
 		}
 		var payload MessageUpdatedPayload
 		if err := json.Unmarshal(events.envelopes[0].Data, &payload); err != nil {
 			t.Fatalf("Unmarshal payload: %v", err)
 		}
-		if payload.RoomID != realRoomID {
-			t.Errorf("room_id = %v, want %v", payload.RoomID, realRoomID)
+		if payload.RoomID != roomID {
+			t.Errorf("room_id = %v, want %v", payload.RoomID, roomID)
 		}
 	})
 }

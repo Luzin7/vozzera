@@ -18,6 +18,10 @@ const (
 	StaffRoomListTopic  Topic = "app:rooms:staff"
 )
 
+func RoomTopic(roomID uuid.UUID) Topic {
+	return Topic("room:" + roomID.String())
+}
+
 func RoomListTopicFor(canModerate bool) Topic {
 	if canModerate {
 		return StaffRoomListTopic

@@ -30,3 +30,7 @@ func ErrDeleteMessage(err error) error {
 func ErrCreateMessage(err error) error {
 	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao salvar mensagem", err)
 }
+
+func ErrAuthorizeRoom(err error) error {
+	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao verificar acesso à sala", err)
+}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
@@ -36,6 +35,7 @@ func (s *DeleteMessageService) Execute(ctx context.Context, in DeleteMessageInpu
 	msg, err := s.repo.DeleteMessage(ctx, DeleteMessageParams{
 		ID:     in.ContentID,
 		UserID: in.UserID,
+		RoomID: in.RoomID,
 		IsMod:  in.IsMod,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -56,7 +56,7 @@ func (s *DeleteMessageService) Execute(ctx context.Context, in DeleteMessageInpu
 		return DeleteMessageOutput{}, ErrDeleteMessage(err)
 	}
 
-	topic := realtime.Topic(fmt.Sprintf("room:%s", msg.RoomID.String()))
+	topic := realtime.RoomTopic(msg.RoomID)
 
 	err = s.publisher.Publish(ctx, topic, realtime.Envelope{
 		V:     1,

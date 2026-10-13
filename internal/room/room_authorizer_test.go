@@ -3,11 +3,13 @@ package room
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestRoomAuthorizer_CanSubscribe(t *testing.T) {
@@ -64,7 +66,7 @@ func TestRoomAuthorizer_CanSubscribe(t *testing.T) {
 	t.Run("sala inexistente", func(t *testing.T) {
 		repo := newFakeRepo()
 		repo.getRoomByID = func(context.Context, uuid.UUID) (Room, error) {
-			return Room{}, errors.New("not found")
+			return Room{}, pgx.ErrNoRows
 		}
 
 		auth := NewRoomAuthorizer(repo)
@@ -81,4 +83,33 @@ func TestRoomAuthorizer_CanSubscribe(t *testing.T) {
 			t.Errorf("erro = %v, want ErrRoomNotFound", err)
 		}
 	})
+}
+
+func TestRoomAuthorizer_CanSubscribe_DatabaseFailureIsInternalError(t *testing.T) {
+	topic := realtime.RoomTopic(uuid.New())
+
+	t.Run("falha no banco ao buscar a sala", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.getRoomByID = func(context.Context, uuid.UUID) (Room, error) { return Room{}, errors.New("conexão caiu") }
+
+		err := NewRoomAuthorizer(repo).CanSubscribe(context.Background(), uuid.NewString(), topic)
+		assertInternalError(t, err)
+	})
+
+	t.Run("falha no banco ao buscar o papel", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.getRoomByID = func(_ context.Context, id uuid.UUID) (Room, error) { return Room{ID: id, StaffOnly: true}, nil }
+		repo.getUserRole = func(context.Context, uuid.UUID) (string, error) { return "", errors.New("conexão caiu") }
+
+		err := NewRoomAuthorizer(repo).CanSubscribe(context.Background(), uuid.NewString(), topic)
+		assertInternalError(t, err)
+	})
+}
+
+func assertInternalError(t *testing.T, err error) {
+	t.Helper()
+	var httpErr *httpx.Error
+	if !errors.As(err, &httpErr) || httpErr.Status != http.StatusInternalServerError {
+		t.Errorf("erro = %v, want erro interno 500", err)
+	}
 }

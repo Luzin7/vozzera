@@ -82,7 +82,8 @@ func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 
-	if _, err := uuid.Parse(r.PathValue("id")); err != nil {
+	roomID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
 		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
 		return
 	}
@@ -105,7 +106,13 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.ensureRoomAccess(r, roomID, claims); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
 	out, err := h.updateMessage.Execute(r.Context(), UpdateMessageInput{
+		RoomID:    roomID,
 		ContentID: contentID,
 		UserID:    claims.UserID,
 		Content:   req.Content,
@@ -134,6 +141,11 @@ func (h *Handler) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	claims, ok := httpx.UserFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Não autenticado", http.StatusUnauthorized)
+		return
+	}
+
+	if err := h.ensureRoomAccess(r, roomID, claims); err != nil {
+		httpx.WriteError(w, err)
 		return
 	}
 
