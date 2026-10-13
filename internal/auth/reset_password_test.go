@@ -28,7 +28,6 @@ func successfulResetRepo(userID uuid.UUID) *fakeRepo {
 	repo := newFakeRepo()
 	repo.consumePasswordResetToken = func(context.Context, string) (uuid.UUID, error) { return userID, nil }
 	repo.updateUserPassword = func(context.Context, UpdateUserPasswordParams) error { return nil }
-	repo.deletePasswordResetTokensByUser = func(context.Context, uuid.UUID) error { return nil }
 	repo.deleteSessionsByUser = func(context.Context, uuid.UUID) error { return nil }
 	return repo
 }
@@ -79,12 +78,6 @@ func TestResetPasswordService_Execute_Success(t *testing.T) {
 		return nil
 	}
 
-	var tokensDeletedFor uuid.UUID
-	repo.deletePasswordResetTokensByUser = func(_ context.Context, id uuid.UUID) error {
-		tokensDeletedFor = id
-		return nil
-	}
-
 	var sessionsDeletedFor uuid.UUID
 	repo.deleteSessionsByUser = func(_ context.Context, id uuid.UUID) error {
 		sessionsDeletedFor = id
@@ -111,9 +104,6 @@ func TestResetPasswordService_Execute_Success(t *testing.T) {
 	}
 	if err := CheckPassword(updated.PasswordHash, "newsecret123"); err != nil {
 		t.Error("senha não foi hashada corretamente")
-	}
-	if tokensDeletedFor != userID {
-		t.Errorf("tokens apagados de %v, want %v", tokensDeletedFor, userID)
 	}
 	if sessionsDeletedFor != userID {
 		t.Errorf("sessões apagadas de %v, want %v", sessionsDeletedFor, userID)

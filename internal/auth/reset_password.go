@@ -74,10 +74,6 @@ func applyPasswordChange(ctx context.Context, repo Repository, change passwordCh
 		return uuid.Nil, ErrResetPassword(err)
 	}
 
-	if err := repo.DeletePasswordResetTokensByUser(ctx, userID); err != nil {
-		return uuid.Nil, ErrResetPassword(err)
-	}
-
 	if err := repo.DeleteSessionsByUser(ctx, userID); err != nil {
 		return uuid.Nil, ErrResetPassword(err)
 	}

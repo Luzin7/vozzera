@@ -32,9 +32,15 @@ func (q *Queries) CleanupExpiredSessions(ctx context.Context) error {
 }
 
 const consumePasswordResetToken = `-- name: ConsumePasswordResetToken :one
+WITH token_owner AS (
+    SELECT valid_token.user_id
+    FROM password_reset_tokens AS valid_token
+    WHERE valid_token.token_hash = $1 AND valid_token.expires_at > NOW()
+)
 DELETE FROM password_reset_tokens
-WHERE token_hash = $1 AND expires_at > NOW()
-RETURNING user_id
+USING token_owner
+WHERE password_reset_tokens.user_id = token_owner.user_id
+RETURNING password_reset_tokens.user_id
 `
 
 func (q *Queries) ConsumePasswordResetToken(ctx context.Context, tokenHash string) (uuid.UUID, error) {
@@ -67,15 +73,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	var i CreateUserRow
 	err := row.Scan(&i.ID, &i.Username, &i.CreatedAt)
 	return i, err
-}
-
-const deletePasswordResetTokensByUser = `-- name: DeletePasswordResetTokensByUser :exec
-DELETE FROM password_reset_tokens WHERE user_id = $1
-`
-
-func (q *Queries) DeletePasswordResetTokensByUser(ctx context.Context, userID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deletePasswordResetTokensByUser, userID)
-	return err
 }
 
 const deleteSessionByID = `-- name: DeleteSessionByID :exec
