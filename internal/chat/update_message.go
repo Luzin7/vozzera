@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
@@ -45,6 +44,7 @@ func (s *UpdateMessageService) Execute(ctx context.Context, in UpdateMessageInpu
 		Content: pgtype.Text{String: in.Content, Valid: true},
 		ID:      in.ContentID,
 		UserID:  in.UserID,
+		RoomID:  in.RoomID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return UpdateMessageOutput{}, ErrMessageNotEditable
@@ -55,7 +55,7 @@ func (s *UpdateMessageService) Execute(ctx context.Context, in UpdateMessageInpu
 
 	payload := MessageUpdatedPayload{
 		ContentID: in.ContentID,
-		RoomID:    in.RoomID,
+		RoomID:    msg.RoomID,
 		UserID:    in.UserID,
 		Content:   in.Content,
 	}
@@ -64,7 +64,7 @@ func (s *UpdateMessageService) Execute(ctx context.Context, in UpdateMessageInpu
 		return UpdateMessageOutput{}, ErrUpdateMessage(err)
 	}
 
-	topic := realtime.Topic(fmt.Sprintf("room:%s", in.RoomID.String()))
+	topic := realtime.RoomTopic(msg.RoomID)
 
 	env := realtime.Envelope{
 		V:     1,

@@ -106,6 +106,11 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.ensureRoomAccess(r, roomID, claims); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
 	out, err := h.updateMessage.Execute(r.Context(), UpdateMessageInput{
 		RoomID:    roomID,
 		ContentID: contentID,
@@ -136,6 +141,11 @@ func (h *Handler) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	claims, ok := httpx.UserFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Não autenticado", http.StatusUnauthorized)
+		return
+	}
+
+	if err := h.ensureRoomAccess(r, roomID, claims); err != nil {
+		httpx.WriteError(w, err)
 		return
 	}
 

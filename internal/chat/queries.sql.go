@@ -48,13 +48,14 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (C
 const deleteMessage = `-- name: DeleteMessage :one
 UPDATE messages
 SET deleted_at = NOW(), content = NULL
-WHERE id = $1 AND (user_id = $2 OR $3::boolean)
+WHERE id = $1 AND room_id = $3 AND (user_id = $2 OR $4::boolean)
 RETURNING id, room_id, user_id, content, created_at
 `
 
 type DeleteMessageParams struct {
 	ID     uuid.UUID `json:"id"`
 	UserID uuid.UUID `json:"user_id"`
+	RoomID uuid.UUID `json:"room_id"`
 	IsMod  bool      `json:"is_mod"`
 }
 
@@ -67,7 +68,12 @@ type DeleteMessageRow struct {
 }
 
 func (q *Queries) DeleteMessage(ctx context.Context, arg DeleteMessageParams) (DeleteMessageRow, error) {
-	row := q.db.QueryRow(ctx, deleteMessage, arg.ID, arg.UserID, arg.IsMod)
+	row := q.db.QueryRow(ctx, deleteMessage,
+		arg.ID,
+		arg.UserID,
+		arg.RoomID,
+		arg.IsMod,
+	)
 	var i DeleteMessageRow
 	err := row.Scan(
 		&i.ID,
@@ -135,7 +141,7 @@ func (q *Queries) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomPa
 const updateMessage = `-- name: UpdateMessage :one
 UPDATE messages
 SET content = $1, updated_at = NOW()
-WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL
+WHERE id = $2 AND user_id = $3 AND room_id = $4 AND deleted_at IS NULL
 RETURNING id, room_id, content, updated_at
 `
 
@@ -143,6 +149,7 @@ type UpdateMessageParams struct {
 	Content pgtype.Text `json:"content"`
 	ID      uuid.UUID   `json:"id"`
 	UserID  uuid.UUID   `json:"user_id"`
+	RoomID  uuid.UUID   `json:"room_id"`
 }
 
 type UpdateMessageRow struct {
@@ -153,7 +160,12 @@ type UpdateMessageRow struct {
 }
 
 func (q *Queries) UpdateMessage(ctx context.Context, arg UpdateMessageParams) (UpdateMessageRow, error) {
-	row := q.db.QueryRow(ctx, updateMessage, arg.Content, arg.ID, arg.UserID)
+	row := q.db.QueryRow(ctx, updateMessage,
+		arg.Content,
+		arg.ID,
+		arg.UserID,
+		arg.RoomID,
+	)
 	var i UpdateMessageRow
 	err := row.Scan(
 		&i.ID,

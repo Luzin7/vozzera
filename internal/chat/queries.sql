@@ -19,11 +19,11 @@ LIMIT $2;
 -- name: UpdateMessage :one
 UPDATE messages
 SET content = $1, updated_at = NOW()
-WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL
+WHERE id = $2 AND user_id = $3 AND room_id = $4 AND deleted_at IS NULL
 RETURNING id, room_id, content, updated_at;
 
 -- name: DeleteMessage :one
 UPDATE messages
 SET deleted_at = NOW(), content = NULL
-WHERE id = $1 AND (user_id = $2 OR sqlc.arg(is_mod)::boolean)
+WHERE id = $1 AND room_id = sqlc.arg(room_id) AND (user_id = $2 OR sqlc.arg(is_mod)::boolean)
 RETURNING id, room_id, user_id, content, created_at;

@@ -2,10 +2,12 @@ package room
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type RoomAuthorizer struct {
@@ -23,8 +25,11 @@ func (a *RoomAuthorizer) CanSubscribe(ctx context.Context, userID string, topic 
 	}
 
 	room, err := a.repo.GetRoomByID(ctx, roomID)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrRoomNotFound
+	}
+	if err != nil {
+		return ErrGetRoom(err)
 	}
 	if !room.StaffOnly {
 		return nil
@@ -40,8 +45,11 @@ func (a *RoomAuthorizer) authorizeStaff(ctx context.Context, userID string) erro
 	}
 
 	role, err := a.repo.GetUserRole(ctx, id)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrRoomNotFound
+	}
+	if err != nil {
+		return ErrGetRoom(err)
 	}
 	if role == httpx.RoleMod || role == httpx.RoleAdmin {
 		return nil

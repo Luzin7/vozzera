@@ -11,7 +11,7 @@ Backend de chat em **texto** e **voz** (real-time com WebSocket e LiveKit Cloud)
 
 ## Funcionalidades
 
-- **Autenticação** — registro por invite code + login com sessão opaca em cookie `HttpOnly; SameSite=None; Secure`, expiração deslizante e revogação via logout.
+- **Autenticação** — registro por invite code + login com sessão opaca em cookie `HttpOnly; SameSite=None; Secure; Partitioned` (CHIPS, para o browser aceitar o cookie com front e API em sites diferentes), expiração deslizante e revogação via logout.
 - **Salas** — texto e voz, listagem e criação via REST.
 - **Mensagens de texto** — envio em tempo real via WebSocket, histórico por sala, edição via `PATCH`.
 - **Voz** — tokens LiveKit assinados pelo backend; mídia vai direto do browser pro LiveKit Cloud.

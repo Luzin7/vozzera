@@ -201,7 +201,7 @@ paths:
       tags: [auth]
       summary: Redefinir senha
       operationId: resetPassword
-      description: Troca a senha usando o token recebido por email. O token é de uso único e expira após `PASSWORD_RESET_TTL`. Revoga todas as sessões do usuário.
+      description: Troca a senha usando o token recebido por email. O token é de uso único e expira após `PASSWORD_RESET_TTL`. Na mesma transação invalida os outros links de redefinição pendentes do usuário e revoga todas as sessões dele; os WebSockets abertos são fechados com o código `4001`.
       security: []
       requestBody:
         required: true
@@ -255,7 +255,7 @@ paths:
       tags: [rooms]
       summary: Criar sala
       operationId: createRoom
-      description: Apenas moderadores e administradores criam salas. Dispara `room.created` no tópico `app:rooms`.
+      description: Apenas moderadores e administradores criam salas. Dispara `room.created` em `app:rooms:staff` e, se a sala não for `staff_only`, em `app:rooms:members`.
       requestBody:
         required: true
         content:
@@ -384,7 +384,7 @@ paths:
       tags: [messages]
       summary: Editar mensagem
       operationId: updateMessage
-      description: Só o autor edita. Mensagem deletada não pode ser editada. Dispara `message.updated` no tópico `room:<id>`.
+      description: Só o autor edita, e só se ainda tiver acesso à sala (`staff_only` exige `mod`/`admin`). A mensagem precisa pertencer à sala do caminho. Mensagem deletada não pode ser editada. Dispara `message.updated` no tópico `room:<id>`.
       parameters:
         - name: id
           in: path
@@ -423,7 +423,7 @@ paths:
       tags: [messages]
       summary: Deletar mensagem
       operationId: deleteMessage
-      description: Soft delete — marca `deleted_at` e zera o `content`. O autor deleta a própria; moderadores e administradores deletam qualquer uma. Dispara `message.deleted` no tópico `room:<id>`.
+      description: Soft delete — marca `deleted_at` e zera o `content`. O autor deleta a própria; moderadores e administradores deletam qualquer uma. Exige acesso à sala, e a mensagem precisa pertencer à sala do caminho. Dispara `message.deleted` no tópico `room:<id>`.
       parameters:
         - name: id
           in: path
@@ -475,6 +475,17 @@ paths:
         | `typing.start` | `{"room_id":"<uuid>"}` | Indicar que está digitando |
         | `typing.stop` | `{"room_id":"<uuid>"}` | Indicar que parou de digitar |
         | `message` | `{"room_id":"<uuid>","content":"texto"}` | Enviar mensagem (1–4000 caracteres). Salva no banco e dispara `message.created` |
+
+        `message`, `typing.start` e `typing.stop` passam pela mesma autorização do `room.subscribe`. Sem acesso à sala o comando é ignorado em silêncio; falha ao consultar o acesso é registrada no log do servidor.
+
+        ## Códigos de fechamento
+
+        | Código | Quando | O que o cliente faz |
+        |--------|--------|---------------------|
+        | `4001` | Sessão revogada: logout em outro lugar ou senha redefinida | Desloga |
+        | `1001` | Servidor desligando (deploy) | Confere a sessão e reconecta |
+        | `1013` | Cliente lento demais para acompanhar os eventos | Confere a sessão e reconecta |
+        | `1000` | Fechamento normal da conexão | — |
 
         ## Eventos recebidos pelo cliente
 
@@ -529,13 +540,19 @@ paths:
         }
         ```
 
+        ### Lista de salas
+        Ao conectar, cada cliente entra em um tópico de lista conforme o papel da sessão:
+        `app:rooms:staff` (mod/admin) ou `app:rooms:members` (demais). Sala `staff_only`
+        nunca é publicada com nome em `app:rooms:members`: na criação os membros não recebem
+        nada, e na edição recebem `room.deleted` para removê-la da lista.
+
         ### room.created
-        Tópico `app:rooms` — sala criada:
+        Tópicos `app:rooms:staff` e `app:rooms:members` — sala criada:
         ```json
         {
           "v":1,
           "type":"room.created",
-          "topic":"app:rooms",
+          "topic":"app:rooms:members",
           "data":{
             "id":"<uuid>",
             "name":"sala",
@@ -547,12 +564,12 @@ paths:
         ```
 
         ### room.updated
-        Tópico `room:<uuid>` — sala editada:
+        Tópicos `app:rooms:staff` e `app:rooms:members` — sala editada:
         ```json
         {
           "v":1,
           "type":"room.updated",
-          "topic":"room:<uuid>",
+          "topic":"app:rooms:staff",
           "data":{
             "id":"<uuid>",
             "name":"novo-nome",
@@ -564,7 +581,9 @@ paths:
         ```
 
         ### room.deleted
-        Tópico `room:<uuid>` — sala deletada:
+        Entregue em `room:<uuid>`, `app:rooms:staff` e `app:rooms:members` — sala deletada
+        (ou sala que virou `staff_only`, só em `app:rooms:members`, com `is_mod: false`).
+        O campo `topic` do envelope é sempre `room:<uuid>` da sala, qualquer que seja o tópico de entrega:
         ```json
         {
           "v":1,

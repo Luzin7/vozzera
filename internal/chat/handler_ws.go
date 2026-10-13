@@ -3,12 +3,17 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"time"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/Luzin7/vozzera-backend/internal/transport/ws"
 	"github.com/google/uuid"
 )
+
+const roomAuthorizationTimeout = 3 * time.Second
 
 type VoicePresenceProvider interface {
 	SnapshotJSON(roomID uuid.UUID) []byte
@@ -30,11 +35,13 @@ func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
 		if err := json.Unmarshal(data, &cmd); err != nil || cmd.RoomID == uuid.Nil {
 			return nil
 		}
-		topic := realtime.Topic("room:" + cmd.RoomID.String())
-		if deps.Authorizer != nil {
-			if err := deps.Authorizer.CanSubscribe(ctx, c.UserID.String(), topic); err != nil {
-				return nil
-			}
+		topic := realtime.RoomTopic(cmd.RoomID)
+		allowed, err := deps.roomAccess(ctx, c.UserID, topic)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return nil
 		}
 		deps.Registerer.Subscribe(c, topic)
 
@@ -62,7 +69,7 @@ func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
 		if err := json.Unmarshal(data, &cmd); err != nil || cmd.RoomID == uuid.Nil {
 			return nil
 		}
-		deps.Registerer.Unsubscribe(c, realtime.Topic("room:"+cmd.RoomID.String()))
+		deps.Registerer.Unsubscribe(c, realtime.RoomTopic(cmd.RoomID))
 		return nil
 	})
 
@@ -84,9 +91,16 @@ func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
 		if cmd.RoomID == uuid.Nil || cmd.Content == "" {
 			return nil
 		}
+		allowed, err := deps.roomAccess(ctx, c.UserID, realtime.RoomTopic(cmd.RoomID))
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return nil
+		}
 		ctxMsg, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		_, err := deps.Sender.Execute(ctxMsg, SendMessageInput{
+		_, err = deps.Sender.Execute(ctxMsg, SendMessageInput{
 			RoomID:   cmd.RoomID,
 			UserID:   c.UserID,
 			Username: c.Username,
@@ -103,7 +117,14 @@ func handleTyping(ctx context.Context, c *realtime.Client, typingType string, da
 	if err := json.Unmarshal(data, &cmd); err != nil || cmd.RoomID == uuid.Nil {
 		return nil
 	}
-	topic := realtime.Topic("room:" + cmd.RoomID.String())
+	topic := realtime.RoomTopic(cmd.RoomID)
+	allowed, err := deps.roomAccess(ctx, c.UserID, topic)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return nil
+	}
 	typingData, _ := json.Marshal(map[string]interface{}{
 		"user_id":  c.UserID,
 		"username": c.Username,
@@ -117,4 +138,27 @@ func handleTyping(ctx context.Context, c *realtime.Client, typingType string, da
 	}
 
 	return deps.Publisher.Publish(ctx, topic, env)
+}
+
+func (deps ChatHandlerDeps) roomAccess(ctx context.Context, userID uuid.UUID, topic realtime.Topic) (bool, error) {
+	if deps.Authorizer == nil {
+		return false, nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, roomAuthorizationTimeout)
+	defer cancel()
+
+	err := deps.Authorizer.CanSubscribe(ctx, userID.String(), topic)
+	if err == nil {
+		return true, nil
+	}
+	if isAccessDenied(err) {
+		return false, nil
+	}
+	return false, ErrAuthorizeRoom(err)
+}
+
+func isAccessDenied(err error) bool {
+	var httpErr *httpx.Error
+	return errors.As(err, &httpErr) && httpErr.Status < http.StatusInternalServerError
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
 )
 
@@ -48,10 +50,11 @@ func TestCreateRoomService_Execute(t *testing.T) {
 			t.Errorf("name = %q, want %q", out.Room.Name, "sala")
 		}
 
-		if len(events.envelopes) != 1 {
-			t.Fatalf("envelopes = %d, want 1", len(events.envelopes))
+		wantTopics := []realtime.Topic{realtime.StaffRoomListTopic, realtime.MemberRoomListTopic}
+		if !slices.Equal(events.topics, wantTopics) {
+			t.Fatalf("topics = %v, want %v", events.topics, wantTopics)
 		}
-		env := events.envelopes[0]
+		env := events.envelopes[1]
 		if env.Type != EventRoomCreated {
 			t.Errorf("type = %q, want %q", env.Type, EventRoomCreated)
 		}
@@ -79,6 +82,11 @@ func TestCreateRoomService_Execute(t *testing.T) {
 		}
 		if !out.Room.StaffOnly {
 			t.Error("out.Room.StaffOnly = false, want true")
+		}
+
+		wantTopics := []realtime.Topic{realtime.StaffRoomListTopic}
+		if !slices.Equal(events.topics, wantTopics) {
+			t.Fatalf("topics = %v, want %v", events.topics, wantTopics)
 		}
 
 		var payload RoomPayload

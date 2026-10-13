@@ -10,7 +10,24 @@ import (
 
 type Topic string
 
-const GlobalPresenceTopic Topic = "__presence__"
+const CloseSessionRevoked = 4001
+
+const (
+	GlobalPresenceTopic Topic = "__presence__"
+	MemberRoomListTopic Topic = "app:rooms:members"
+	StaffRoomListTopic  Topic = "app:rooms:staff"
+)
+
+func RoomTopic(roomID uuid.UUID) Topic {
+	return Topic("room:" + roomID.String())
+}
+
+func RoomListTopicFor(canModerate bool) Topic {
+	if canModerate {
+		return StaffRoomListTopic
+	}
+	return MemberRoomListTopic
+}
 
 type UserPresence struct {
 	UserID   uuid.UUID `json:"user_id"`

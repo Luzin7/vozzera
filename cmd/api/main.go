@@ -165,10 +165,12 @@ func main() {
 		"/api/rooms/":          {Limit: 120, Window: time.Minute},
 		"/api/voice/webhook":   {Limit: 120, Window: time.Minute},
 		"/api/presence":        {Limit: 60, Window: time.Minute},
-	})
+	}, cfg.ClientIPHeader)
+	logClientIPSource(cfg.ClientIPHeader)
 
 	auth.RegisterHandlers(mux, auth.AuthDeps{
 		Repo:             authQueries,
+		Transactor:       auth.NewPgTransactor(pool),
 		InviteCode:       cfg.InviteCode,
 		SessionTTL:       cfg.SessionTTL,
 		PasswordResetTTL: cfg.PasswordResetTTL,
@@ -217,8 +219,7 @@ func main() {
 		AuthMW:  authMw,
 	})
 
-	handler := httpx.SecurityHeaders(rateLimiter.Middleware(httpx.CORS(cfg.CORSOrigins)(mux)))
-	finalHandler := httpx.Logger(handler)
+	finalHandler := httpx.Logger(httpx.EdgeMiddleware(mux, cfg.CORSOrigins, rateLimiter))
 
 	mux.Handle("GET /api/ws", authMw(http.HandlerFunc(wsHandler.ServeHTTP)))
 
@@ -307,4 +308,12 @@ func (s *presenceStats) ListUsers(ctx context.Context) ([]realtime.UserPresence,
 		users[i] = realtime.UserPresence{UserID: r.ID, Username: r.Username}
 	}
 	return users, nil
+}
+
+func logClientIPSource(header string) {
+	if header == "" {
+		log.Printf("Rate limit identifica o cliente pelo endereço da conexão (CLIENT_IP_HEADER vazio)")
+		return
+	}
+	log.Printf("Rate limit identifica o cliente pelo header %s", header)
 }

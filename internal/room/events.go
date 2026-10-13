@@ -28,24 +28,84 @@ type RoomDeletedPayload struct {
 	IsMod bool      `json:"is_mod"`
 }
 
-func publishRoom(ctx context.Context, publisher realtime.Publisher, event string, topic realtime.Topic, room Room) error {
-	payload := RoomPayload{
+type roomAnnouncement struct {
+	event string
+	room  Room
+}
+
+type roomEventPublisher struct {
+	publisher realtime.Publisher
+}
+
+func (p roomEventPublisher) created(ctx context.Context, room Room) error {
+	announcement := roomAnnouncement{event: EventRoomCreated, room: room}
+	if err := p.announce(ctx, realtime.StaffRoomListTopic, announcement); err != nil {
+		return err
+	}
+	if room.StaffOnly {
+		return nil
+	}
+	return p.announce(ctx, realtime.MemberRoomListTopic, announcement)
+}
+
+func (p roomEventPublisher) updated(ctx context.Context, room Room) error {
+	announcement := roomAnnouncement{event: EventRoomUpdated, room: room}
+	if err := p.announce(ctx, realtime.StaffRoomListTopic, announcement); err != nil {
+		return err
+	}
+	if room.StaffOnly {
+		return p.announceRemoval(ctx, realtime.MemberRoomListTopic, RoomDeletedPayload{ID: room.ID})
+	}
+	return p.announce(ctx, realtime.MemberRoomListTopic, announcement)
+}
+
+func (p roomEventPublisher) deleted(ctx context.Context, roomID uuid.UUID) error {
+	payload := RoomDeletedPayload{ID: roomID, IsMod: true}
+	topics := []realtime.Topic{
+		realtime.RoomTopic(roomID),
+		realtime.StaffRoomListTopic,
+		realtime.MemberRoomListTopic,
+	}
+	for _, topic := range topics {
+		if err := p.announceRemoval(ctx, topic, payload); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p roomEventPublisher) announce(ctx context.Context, topic realtime.Topic, announcement roomAnnouncement) error {
+	room := announcement.room
+	data, err := json.Marshal(RoomPayload{
 		ID:        room.ID,
 		Name:      room.Name,
 		HasVoice:  room.HasVoice,
 		StaffOnly: room.StaffOnly,
 		CreatedAt: room.CreatedAt.Time,
+	})
+	if err != nil {
+		return err
 	}
 
+	return p.publisher.Publish(ctx, topic, realtime.Envelope{
+		V:     1,
+		Type:  announcement.event,
+		Topic: topic,
+		TS:    time.Now(),
+		Data:  data,
+	})
+}
+
+func (p roomEventPublisher) announceRemoval(ctx context.Context, deliveryTopic realtime.Topic, payload RoomDeletedPayload) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	return publisher.Publish(ctx, topic, realtime.Envelope{
+	return p.publisher.Publish(ctx, deliveryTopic, realtime.Envelope{
 		V:     1,
-		Type:  event,
-		Topic: topic,
+		Type:  EventRoomDeleted,
+		Topic: realtime.RoomTopic(payload.ID),
 		TS:    time.Now(),
 		Data:  data,
 	})

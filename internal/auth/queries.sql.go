@@ -31,6 +31,25 @@ func (q *Queries) CleanupExpiredSessions(ctx context.Context) error {
 	return err
 }
 
+const consumePasswordResetToken = `-- name: ConsumePasswordResetToken :one
+WITH token_owner AS (
+    SELECT valid_token.user_id
+    FROM password_reset_tokens AS valid_token
+    WHERE valid_token.token_hash = $1 AND valid_token.expires_at > NOW()
+)
+DELETE FROM password_reset_tokens
+USING token_owner
+WHERE password_reset_tokens.user_id = token_owner.user_id
+RETURNING password_reset_tokens.user_id
+`
+
+func (q *Queries) ConsumePasswordResetToken(ctx context.Context, tokenHash string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, consumePasswordResetToken, tokenHash)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash)
 VALUES ($1, $2, $3)
@@ -56,15 +75,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
-const deletePasswordResetToken = `-- name: DeletePasswordResetToken :exec
-DELETE FROM password_reset_tokens WHERE id = $1
-`
-
-func (q *Queries) DeletePasswordResetToken(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deletePasswordResetToken, id)
-	return err
-}
-
 const deleteSessionByID = `-- name: DeleteSessionByID :exec
 DELETE FROM sessions WHERE id = $1
 `
@@ -81,26 +91,6 @@ DELETE FROM sessions WHERE user_id = $1
 func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deleteSessionsByUser, userID)
 	return err
-}
-
-const getPasswordResetTokenByHash = `-- name: GetPasswordResetTokenByHash :one
-SELECT id, user_id, expires_at
-FROM password_reset_tokens
-WHERE token_hash = $1 AND expires_at > NOW()
-LIMIT 1
-`
-
-type GetPasswordResetTokenByHashRow struct {
-	ID        uuid.UUID `json:"id"`
-	UserID    uuid.UUID `json:"user_id"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
-
-func (q *Queries) GetPasswordResetTokenByHash(ctx context.Context, tokenHash string) (GetPasswordResetTokenByHashRow, error) {
-	row := q.db.QueryRow(ctx, getPasswordResetTokenByHash, tokenHash)
-	var i GetPasswordResetTokenByHashRow
-	err := row.Scan(&i.ID, &i.UserID, &i.ExpiresAt)
-	return i, err
 }
 
 const getSessionByID = `-- name: GetSessionByID :one

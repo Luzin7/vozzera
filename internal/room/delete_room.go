@@ -2,10 +2,7 @@ package room
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
@@ -19,12 +16,12 @@ type DeleteRoomInput struct {
 }
 
 type DeleteRoomService struct {
-	repo      Repository
-	publisher realtime.Publisher
+	repo   Repository
+	events roomEventPublisher
 }
 
 func NewDeleteRoomService(repo Repository, publisher realtime.Publisher) *DeleteRoomService {
-	return &DeleteRoomService{repo: repo, publisher: publisher}
+	return &DeleteRoomService{repo: repo, events: roomEventPublisher{publisher: publisher}}
 }
 
 func (s *DeleteRoomService) Execute(ctx context.Context, in DeleteRoomInput) error {
@@ -40,18 +37,8 @@ func (s *DeleteRoomService) Execute(ctx context.Context, in DeleteRoomInput) err
 		return ErrDeleteRoom(err)
 	}
 
-	payload := RoomDeletedPayload{ID: in.ID, IsMod: true}
-	data, err := json.Marshal(payload)
-	if err != nil {
+	if err := s.events.deleted(ctx, in.ID); err != nil {
 		return ErrDeleteRoom(err)
 	}
-
-	topic := realtime.Topic(fmt.Sprintf("room:%s", in.ID.String()))
-	return s.publisher.Publish(ctx, topic, realtime.Envelope{
-		V:     1,
-		Type:  EventRoomDeleted,
-		Topic: topic,
-		TS:    time.Now(),
-		Data:  data,
-	})
+	return nil
 }

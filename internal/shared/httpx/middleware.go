@@ -17,6 +17,8 @@ const (
 	RoleAdmin = "admin"
 )
 
+const SessionCookieName = "auth_token"
+
 type UserClaims struct {
 	UserID    uuid.UUID
 	Username  string
@@ -33,7 +35,7 @@ type TokenParser func(ctx context.Context, token string) (UserClaims, error)
 func Auth(parse TokenParser) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			cookie, err := r.Cookie("auth_token")
+			cookie, err := r.Cookie(SessionCookieName)
 			if err != nil {
 				http.Error(w, "Não autenticado", http.StatusUnauthorized)
 				return

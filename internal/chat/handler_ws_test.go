@@ -37,10 +37,16 @@ func (f *fakeRegisterer) Unsubscribe(c *realtime.Client, topic realtime.Topic) {
 }
 
 type fakeAuthorizer struct {
-	err error
+	err         error
+	userID      string
+	topic       realtime.Topic
+	hasDeadline bool
 }
 
 func (f *fakeAuthorizer) CanSubscribe(ctx context.Context, userID string, topic realtime.Topic) error {
+	f.userID = userID
+	f.topic = topic
+	_, f.hasDeadline = ctx.Deadline()
 	return f.err
 }
 
@@ -85,7 +91,7 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		r := ws.NewRouter()
 		RegisterChatHandlers(r, ChatHandlerDeps{
 			Registerer: reg,
-			Authorizer: &fakeAuthorizer{err: errors.New("não autorizado")},
+			Authorizer: &fakeAuthorizer{err: ErrRoomNotFound},
 		})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
@@ -97,7 +103,7 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		}
 
 		if len(reg.subscribed[userID.String()]) != 0 {
-			t.Error("subscribe nÃ£o deveria ter sido chamado")
+			t.Error("subscribe não deveria ter sido chamado")
 		}
 	})
 
@@ -129,8 +135,9 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		reg := newFakeRegisterer()
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
 		pub := &fakePublisher{}
+		authorizer := &fakeAuthorizer{}
 		r := ws.NewRouter()
-		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub})
+		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub, Authorizer: authorizer})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
 		env := realtime.Envelope{V: 1, Type: CmdTypingStart, Data: data}
@@ -164,6 +171,9 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		if payload["username"] != username {
 			t.Errorf("username = %v, want %v", payload["username"], username)
 		}
+		if authorizer.userID != userID.String() || authorizer.topic != realtime.RoomTopic(roomID) {
+			t.Errorf("autorização de %q em %q, want %q em %q", authorizer.userID, authorizer.topic, userID, realtime.RoomTopic(roomID))
+		}
 	})
 
 	t.Run("typing.stop", func(t *testing.T) {
@@ -171,7 +181,7 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
 		pub := &fakePublisher{}
 		r := ws.NewRouter()
-		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub})
+		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub, Authorizer: &fakeAuthorizer{}})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
 		env := realtime.Envelope{V: 1, Type: CmdTypingStop, Data: data}
@@ -219,8 +229,9 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 			}, nil
 		}
 		sender := NewSendMessageService(repo, pub)
+		authorizer := &fakeAuthorizer{}
 		r := ws.NewRouter()
-		RegisterChatHandlers(r, ChatHandlerDeps{Sender: sender, Registerer: reg, Publisher: pub})
+		RegisterChatHandlers(r, ChatHandlerDeps{Sender: sender, Registerer: reg, Publisher: pub, Authorizer: authorizer})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String(), "content": "hello"})
 		env := realtime.Envelope{V: 1, Type: CmdMessage, Data: data}
@@ -245,13 +256,110 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		if payload.Username != username {
 			t.Errorf("username = %q, want %q", payload.Username, username)
 		}
+		if authorizer.userID != userID.String() || authorizer.topic != realtime.RoomTopic(roomID) {
+			t.Errorf("autorização de %q em %q, want %q em %q", authorizer.userID, authorizer.topic, userID, realtime.RoomTopic(roomID))
+		}
+		if !authorizer.hasDeadline {
+			t.Error("verificação de acesso sem prazo")
+		}
+	})
+
+	t.Run("message em sala sem acesso não é enviada", func(t *testing.T) {
+		reg := newFakeRegisterer()
+		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
+		pub := &fakePublisher{}
+		repo := newFakeRepo()
+		created := false
+		repo.createMessage = func(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
+			created = true
+			return CreateMessageRow{}, nil
+		}
+		sender := NewSendMessageService(repo, pub)
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{
+			Sender:     sender,
+			Registerer: reg,
+			Publisher:  pub,
+			Authorizer: &fakeAuthorizer{err: ErrRoomNotFound},
+		})
+
+		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String(), "content": "hello"})
+		if err := r.HandleMessage(client, realtime.Envelope{V: 1, Type: CmdMessage, Data: data}); err != nil {
+			t.Fatalf("HandleMessage() erro inesperado: %v", err)
+		}
+
+		if created {
+			t.Error("mensagem não deveria ter sido gravada")
+		}
+		if len(pub.envelopes) != 0 {
+			t.Errorf("envelopes = %d, want 0", len(pub.envelopes))
+		}
+	})
+
+	t.Run("typing em sala sem acesso não é publicado", func(t *testing.T) {
+		reg := newFakeRegisterer()
+		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
+		pub := &fakePublisher{}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{
+			Registerer: reg,
+			Publisher:  pub,
+			Authorizer: &fakeAuthorizer{err: ErrRoomNotFound},
+		})
+
+		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
+		if err := r.HandleMessage(client, realtime.Envelope{V: 1, Type: CmdTypingStart, Data: data}); err != nil {
+			t.Fatalf("HandleMessage() erro inesperado: %v", err)
+		}
+
+		if len(pub.envelopes) != 0 {
+			t.Errorf("envelopes = %d, want 0", len(pub.envelopes))
+		}
+	})
+
+	t.Run("message com falha ao verificar acesso devolve o erro", func(t *testing.T) {
+		reg := newFakeRegisterer()
+		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
+		pub := &fakePublisher{}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{
+			Sender:     NewSendMessageService(newFakeRepo(), pub),
+			Registerer: reg,
+			Publisher:  pub,
+			Authorizer: &fakeAuthorizer{err: errors.New("conexão com o banco caiu")},
+		})
+
+		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String(), "content": "hello"})
+		if err := r.HandleMessage(client, realtime.Envelope{V: 1, Type: CmdMessage, Data: data}); err == nil {
+			t.Fatal("HandleMessage() deveria devolver a falha da verificação de acesso")
+		}
+		if len(pub.envelopes) != 0 {
+			t.Errorf("envelopes = %d, want 0", len(pub.envelopes))
+		}
+	})
+
+	t.Run("typing com falha ao verificar acesso devolve o erro", func(t *testing.T) {
+		reg := newFakeRegisterer()
+		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
+		pub := &fakePublisher{}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{
+			Registerer: reg,
+			Publisher:  pub,
+			Authorizer: &fakeAuthorizer{err: errors.New("conexão com o banco caiu")},
+		})
+
+		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
+		if err := r.HandleMessage(client, realtime.Envelope{V: 1, Type: CmdTypingStart, Data: data}); err == nil {
+			t.Fatal("HandleMessage() deveria devolver a falha da verificação de acesso")
+		}
 	})
 
 	t.Run("command com room_id nulo", func(t *testing.T) {
 		reg := newFakeRegisterer()
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
 		r := ws.NewRouter()
-		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg})
+		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Authorizer: &fakeAuthorizer{}})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": uuid.Nil.String()})
 		env := realtime.Envelope{V: 1, Type: CmdSubscribe, Data: data}
@@ -262,7 +370,7 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		}
 
 		if len(reg.subscribed[userID.String()]) != 0 {
-			t.Error("subscribe nÃ£o deveria ter sido chamado para room_id nulo")
+			t.Error("subscribe não deveria ter sido chamado para room_id nulo")
 		}
 	})
 }
