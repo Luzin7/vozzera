@@ -35,7 +35,9 @@ func TestDeleteMessageService_Execute(t *testing.T) {
 		userID := uuid.New()
 
 		repo := newFakeRepo()
+		var queriedRoom uuid.UUID
 		repo.deleteMessage = func(ctx context.Context, arg DeleteMessageParams) (DeleteMessageRow, error) {
+			queriedRoom = arg.RoomID
 			return DeleteMessageRow{
 				ID:     contentID,
 				RoomID: roomID,
@@ -55,6 +57,9 @@ func TestDeleteMessageService_Execute(t *testing.T) {
 			t.Fatalf("Execute() erro inesperado: %v", err)
 		}
 
+		if queriedRoom != roomID {
+			t.Errorf("consulta na sala %v, want %v", queriedRoom, roomID)
+		}
 		if len(events.envelopes) != 1 {
 			t.Fatalf("envelopes = %d, want 1", len(events.envelopes))
 		}

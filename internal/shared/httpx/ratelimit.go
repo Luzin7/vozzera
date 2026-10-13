@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"math"
 	"net"
 	"net/http"
 	"sort"
@@ -91,8 +92,9 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 
 		bucket.count++
 		if bucket.count > rule.Limit {
+			retryAfter := secondsUntil(bucket.windowEnd)
 			rl.mu.Unlock()
-			w.Header().Set("Retry-After", strconv.Itoa(int(rule.Window/time.Second)))
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 			http.Error(w, "Muitas requisições. Tente novamente em instantes", http.StatusTooManyRequests)
 			return
 		}
@@ -112,8 +114,8 @@ func (rl *RateLimiter) ruleFor(path string) (RateLimitRule, bool) {
 }
 
 func (rl *RateLimiter) clientIP(r *http.Request) string {
-	if ip := strings.TrimSpace(r.Header.Get(rl.clientIPHeader)); ip != "" {
-		return ip
+	if ip := net.ParseIP(strings.TrimSpace(r.Header.Get(rl.clientIPHeader))); ip != nil {
+		return ip.String()
 	}
 
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -123,6 +125,6 @@ func (rl *RateLimiter) clientIP(r *http.Request) string {
 	return host
 }
 
-func EdgeMiddleware(next http.Handler, corsOrigins []string, limiter *RateLimiter) http.Handler {
-	return SecurityHeaders(CORS(corsOrigins)(limiter.Middleware(next)))
+func secondsUntil(deadline time.Time) int {
+	return int(math.Ceil(time.Until(deadline).Seconds()))
 }

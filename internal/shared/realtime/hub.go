@@ -9,6 +9,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var ErrHubClosed = errors.New("hub encerrado")
+
 type subscription struct {
 	client *Client
 	topic  Topic
@@ -90,7 +92,7 @@ func (h *Hub) Publish(ctx context.Context, topic Topic, env Envelope) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-h.done:
-		return errors.New("hub encerrado")
+		return ErrHubClosed
 	}
 }
 
@@ -129,7 +131,7 @@ func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-h.done:
-		return errors.New("hub encerrado")
+		return ErrHubClosed
 	}
 }
 
@@ -140,7 +142,7 @@ func (h *Hub) RevokeUser(ctx context.Context, userID uuid.UUID) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-h.done:
-		return errors.New("hub encerrado")
+		return ErrHubClosed
 	}
 }
 
@@ -151,7 +153,7 @@ func (h *Hub) RevokeTopic(ctx context.Context, topic Topic) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-h.done:
-		return errors.New("hub encerrado")
+		return ErrHubClosed
 	}
 }
 
@@ -163,7 +165,7 @@ func (h *Hub) Sync(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-h.done:
-		return errors.New("hub encerrado")
+		return ErrHubClosed
 	}
 
 	select {
@@ -172,7 +174,7 @@ func (h *Hub) Sync(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-h.done:
-		return errors.New("hub encerrado")
+		return ErrHubClosed
 	}
 }
 
@@ -226,18 +228,10 @@ func (h *Hub) Run() {
 			h.removeClient(client, websocket.CloseNormalClosure)
 
 		case sessionID := <-h.revoke:
-			for client := range h.clients {
-				if client.SessionID == sessionID {
-					h.removeClient(client, CloseSessionRevoked)
-				}
-			}
+			h.removeClientsWhere(func(c *Client) bool { return c.SessionID == sessionID }, CloseSessionRevoked)
 
 		case userID := <-h.revokeUser:
-			for client := range h.clients {
-				if client.UserID == userID {
-					h.removeClient(client, CloseSessionRevoked)
-				}
-			}
+			h.removeClientsWhere(func(c *Client) bool { return c.UserID == userID }, CloseSessionRevoked)
 
 		case topic := <-h.revokeTopic:
 			for client := range h.topics[topic] {
@@ -269,16 +263,40 @@ func (h *Hub) Run() {
 			delete(unsub.client.Topics, unsub.topic)
 
 		case payload := <-h.broadcast:
-			clients := h.topics[payload.topic]
-			for client := range clients {
-				select {
-				case client.send <- payload.data:
-				default:
-					h.removeClient(client, websocket.CloseTryAgainLater)
-				}
-			}
+			h.deliver(payload)
+
 		case replyChan := <-h.sync:
+			h.deliverPendingBroadcasts()
 			replyChan <- struct{}{}
+		}
+	}
+}
+
+func (h *Hub) deliver(payload broadcastPayload) {
+	for client := range h.topics[payload.topic] {
+		select {
+		case client.send <- payload.data:
+		default:
+			h.removeClient(client, websocket.CloseTryAgainLater)
+		}
+	}
+}
+
+func (h *Hub) deliverPendingBroadcasts() {
+	for {
+		select {
+		case payload := <-h.broadcast:
+			h.deliver(payload)
+		default:
+			return
+		}
+	}
+}
+
+func (h *Hub) removeClientsWhere(match func(*Client) bool, closeCode int) {
+	for client := range h.clients {
+		if match(client) {
+			h.removeClient(client, closeCode)
 		}
 	}
 }

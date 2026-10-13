@@ -26,7 +26,10 @@ Cada domínio é **auto-contido**: handler, service, queries SQL e código gerad
     register.go            #   update_email, request_password_reset, reset_password
     password.go            # HashPassword / CheckPassword (bcrypt)
     session_authenticator.go  # Valida sessão opaca com expiração deslizante
-    ports.go               # Repository, SessionRevoker, MailSender
+    ports.go               # Repository, Transactor, SessionRevoker, MailSender
+    transactor.go          # PgTransactor: roda um caso de uso numa transação (WithinTx)
+    session_cookie.go      # Cookie de sessão particionado e expiração da versão sem partição
+    revoke_sockets.go      # Derruba os WS depois de logout/reset, com timeout próprio
     errors.go              # Um erro nomeado por caso, com status HTTP
     queries.sql            # Arquivo para o sqlc gerar o repositório deste domínio
     db.go                  # (Gerado pelo sqlc — NÃO editar)
@@ -46,7 +49,7 @@ Cada domínio é **auto-contido**: handler, service, queries SQL e código gerad
   /room
     handler.go             # Rotas /api/rooms* (CRUD e listagem com filtro has_voice)
     access.go              # Política única de acesso (staff_only)
-    room_authorizer.go     # Autorização de subscribe via WebSocket
+    room_authorizer.go     # Autorização de subscribe e de escrita (message/typing) via WebSocket
     queries.sql            # CRUD de rooms
     db.go                  # (Gerado pelo sqlc)
     models.go              # (Gerado pelo sqlc)
@@ -170,11 +173,11 @@ Para usar no código do domínio, basta chamar `auth.New(pool)` ou `chat.New(poo
 
 | Domínio    | Status       | Detalhes |
 |------------|-------------|----------|
-| **Auth**   | Funcional   | `handler.go`: register com invite code + login que cria sessão opaca (cookie HttpOnly, `SESSION_TTL` deslizante) + logout que revoga a sessão e derruba os WS da sessão. `password.go`: HashPassword, CheckPassword. Um arquivo por caso de uso, sem service-balde. Queries: `CreateUser`, `GetUserByUsername`, `InsertSession`, `GetSessionByID`, `TouchSession`, `DeleteSessionByID`, `DeleteSessionsByUser`, `CleanupExpiredSessions`. |
-| **Room**   | Funcional   | `handler.go`: `GET/POST /api/rooms` (listagem aceita `?has_voice=`) e `PATCH/DELETE /api/rooms/{id}`. `access.go`: política única `CanAccess`/`AuthorizeVoice` com `staff_only` (mod/admin ignoram). `room_authorizer.go`: autoriza subscribe WS. Queries: `ListRooms`, `GetRoomByID`, `CreateRoom`, `UpdateRoom`, `DeleteRoom`, `GetUserRole`. |
-| **Chat**   | Funcional   | `handler_ws.go`: roteamento de WS de mensagem/typing/subscribe. `handler.go`: `GET /api/rooms/{id}/messages`, `PATCH/DELETE /api/rooms/{id}/messages/{content_id}`. Mensagens consultam `room.RoomAccess` antes de listar. Queries: `CreateMessage`, `GetMessagesByRoom`, `UpdateMessage`, `DeleteMessage`. |
+| **Auth**   | Funcional   | `handler.go`: register com invite code + login que cria sessão opaca (cookie HttpOnly, `SESSION_TTL` deslizante) + logout que revoga a sessão e derruba os WS da sessão. Redefinição de senha numa transação (consome o token e apaga os links pendentes num comando só, troca a senha, apaga as sessões) e depois fecha os WS do usuário com `4001`. `password.go`: HashPassword, CheckPassword. Um arquivo por caso de uso, sem service-balde. Queries: `CreateUser`, `GetUserByUsername`, `InsertSession`, `GetSessionByID`, `TouchSession`, `DeleteSessionByID`, `DeleteSessionsByUser`, `CleanupExpiredSessions`, `InsertPasswordResetToken`, `ConsumePasswordResetToken`. |
+| **Room**   | Funcional   | `handler.go`: `GET/POST /api/rooms` (listagem aceita `?has_voice=`) e `PATCH/DELETE /api/rooms/{id}`. `access.go`: política única `CanAccess`/`AuthorizeVoice` com `staff_only` (mod/admin ignoram). `room_authorizer.go`: autoriza subscribe e escrita WS, separando sala inexistente (404) de falha de banco (500). Queries: `ListRooms`, `GetRoomByID`, `CreateRoom`, `UpdateRoom`, `DeleteRoom`, `GetUserRole`. |
+| **Chat**   | Funcional   | `handler_ws.go`: roteamento de WS de mensagem/typing/subscribe. `handler.go`: `GET /api/rooms/{id}/messages`, `PATCH/DELETE /api/rooms/{id}/messages/{content_id}`. Mensagens consultam `room.RoomAccess` antes de listar, editar e apagar; edição e exclusão filtram pela sala do caminho. Queries: `CreateMessage`, `GetMessagesByRoom`, `UpdateMessage`, `DeleteMessage`. |
 | **Voice**  | Funcional   | `livekit.go`: `TokenIssuer` assina JWT do LiveKit via `protocol/auth`. `handler.go`: `POST /api/voice/token` (delega acesso a `VoiceRoomAccess`, sem persistência própria) e webhook do LiveKit. `presence.go`/`webhook.go`: presença em memória. |
-| **Shared** | Funcional   | `config.go`: `Load()` com godotenv (`SESSION_TTL`, `SESSION_TOUCH_WINDOW`). `db.go`: `Connect()` retorna `*pgxpool.Pool`. `httpx/`: `Auth()` valida sessão no DB e põe user no context, `UserFromContext()`, `CORS()` (provisório — reflete qualquer origin, ver T2 do roadmap). |
+| **Shared** | Funcional   | `config.go`: `Load()` com godotenv (`SESSION_TTL`, `SESSION_TOUCH_WINDOW`). `db.go`: `Connect()` retorna `*pgxpool.Pool`. `httpx/`: `Auth()` valida sessão no DB e põe user no context, `UserFromContext()`, `CORS()` com a lista de `CORS_ORIGINS`, rate limit por rota (`ratelimit.go`; IP do cliente pelo header de `CLIENT_IP_HEADER`, no Render `CF-Connecting-IP`, validado como IP) e `EdgeMiddleware()` montando segurança → CORS → rate limit. `realtime/`: hub com códigos de fechamento (`4001` sessão revogada, `1001` desligamento, `1013` cliente lento). |
 | **Main**   | Funcional   | Carrega config → conecta pool → cria `auth/chat/voice` queries → cria `Hub` único e dispara `go hub.Run()` → registra rotas REST/WS com middleware de auth. O `Hub` é injetado em `ServeWs` e em `chat.RegisterHandlers` — mesma instância. |
 
 ### Dependências (`go.mod`)

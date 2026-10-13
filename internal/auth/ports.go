@@ -19,7 +19,6 @@ type Repository interface {
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) error
 	InsertPasswordResetToken(ctx context.Context, arg InsertPasswordResetTokenParams) (PasswordResetToken, error)
 	ConsumePasswordResetToken(ctx context.Context, tokenHash string) (uuid.UUID, error)
-	DeletePasswordResetTokensByUser(ctx context.Context, userID uuid.UUID) error
 	CleanupExpiredPasswordResetTokens(ctx context.Context) error
 	GetSessionByID(ctx context.Context, id uuid.UUID) (GetSessionByIDRow, error)
 	TouchSession(ctx context.Context, arg TouchSessionParams) error

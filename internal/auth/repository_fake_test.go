@@ -24,7 +24,6 @@ type fakeRepo struct {
 	updateUserEmail                   func(context.Context, UpdateUserEmailParams) error
 	insertPasswordResetToken          func(context.Context, InsertPasswordResetTokenParams) (PasswordResetToken, error)
 	consumePasswordResetToken         func(context.Context, string) (uuid.UUID, error)
-	deletePasswordResetTokensByUser   func(context.Context, uuid.UUID) error
 	cleanupExpiredPasswordResetTokens func(context.Context) error
 	getSessionByID                    func(context.Context, uuid.UUID) (GetSessionByIDRow, error)
 	touchSession                      func(context.Context, TouchSessionParams) error
@@ -67,9 +66,6 @@ func newFakeRepo() *fakeRepo {
 		},
 		consumePasswordResetToken: func(context.Context, string) (uuid.UUID, error) {
 			return uuid.Nil, errors.New("consumePasswordResetToken não configurado")
-		},
-		deletePasswordResetTokensByUser: func(context.Context, uuid.UUID) error {
-			return errors.New("deletePasswordResetTokensByUser não configurado")
 		},
 		cleanupExpiredPasswordResetTokens: func(context.Context) error {
 			return errors.New("cleanupExpiredPasswordResetTokens não configurado")
@@ -123,10 +119,6 @@ func (f *fakeRepo) InsertPasswordResetToken(ctx context.Context, arg InsertPassw
 
 func (f *fakeRepo) ConsumePasswordResetToken(ctx context.Context, tokenHash string) (uuid.UUID, error) {
 	return f.consumePasswordResetToken(ctx, tokenHash)
-}
-
-func (f *fakeRepo) DeletePasswordResetTokensByUser(ctx context.Context, userID uuid.UUID) error {
-	return f.deletePasswordResetTokensByUser(ctx, userID)
 }
 
 func (f *fakeRepo) CleanupExpiredPasswordResetTokens(ctx context.Context) error {

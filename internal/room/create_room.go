@@ -20,12 +20,12 @@ type CreateRoomOutput struct {
 }
 
 type CreateRoomService struct {
-	repo      Repository
-	publisher realtime.Publisher
+	repo   Repository
+	events roomEventPublisher
 }
 
 func NewCreateRoomService(repo Repository, publisher realtime.Publisher) *CreateRoomService {
-	return &CreateRoomService{repo: repo, publisher: publisher}
+	return &CreateRoomService{repo: repo, events: roomEventPublisher{publisher: publisher}}
 }
 
 func (s *CreateRoomService) Execute(ctx context.Context, in CreateRoomInput) (CreateRoomOutput, error) {
@@ -43,7 +43,7 @@ func (s *CreateRoomService) Execute(ctx context.Context, in CreateRoomInput) (Cr
 		return CreateRoomOutput{}, ErrCreateRoom(err)
 	}
 
-	if err := publishToRoomLists(ctx, s.publisher, EventRoomCreated, room); err != nil {
+	if err := s.events.created(ctx, room); err != nil {
 		return CreateRoomOutput{}, ErrCreateRoom(err)
 	}
 

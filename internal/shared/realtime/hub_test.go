@@ -176,7 +176,7 @@ func TestHub_RevokeRemoveClienteDaSessionID(t *testing.T) {
 	}
 }
 
-func TestHub_RevokeFechaComCodigoDeSessaoRevogada(t *testing.T) {
+func TestHub_RevokeClosesWithSessionRevokedCode(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -194,7 +194,7 @@ func TestHub_RevokeFechaComCodigoDeSessaoRevogada(t *testing.T) {
 	}
 }
 
-func TestHub_ShutdownFechaComGoingAway(t *testing.T) {
+func TestHub_ShutdownClosesWithGoingAway(t *testing.T) {
 	hub := NewHub()
 	go hub.Run()
 
@@ -210,7 +210,7 @@ func TestHub_ShutdownFechaComGoingAway(t *testing.T) {
 	}
 }
 
-func TestHub_ClienteLentoFechaComTryAgainLater(t *testing.T) {
+func TestHub_SlowClientClosesWithTryAgainLater(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -222,9 +222,7 @@ func TestHub_ClienteLentoFechaComTryAgainLater(t *testing.T) {
 	hub.Subscribe(client, topic)
 	hub.Sync(ctx)
 
-	for range cap(client.send) {
-		client.send <- []byte("{}")
-	}
+	fillSendBuffer(client)
 	hub.Publish(ctx, topic, Envelope{V: 1, Type: "test", Topic: topic, TS: time.Now()})
 	hub.Sync(ctx)
 
@@ -233,7 +231,7 @@ func TestHub_ClienteLentoFechaComTryAgainLater(t *testing.T) {
 	}
 }
 
-func TestHub_UnregisterFechaComNormalClosure(t *testing.T) {
+func TestHub_UnregisterClosesWithNormalClosure(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -249,7 +247,7 @@ func TestHub_UnregisterFechaComNormalClosure(t *testing.T) {
 	}
 }
 
-func TestHub_RevokeUserRemoveTodosOsClientesDoUsuario(t *testing.T) {
+func TestHub_RevokeUserRemovesAllClientsOfUser(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -274,5 +272,11 @@ func TestHub_RevokeUserRemoveTodosOsClientesDoUsuario(t *testing.T) {
 	}
 	if !hub.clients[other] {
 		t.Error("cliente de outro usuário deveria permanecer registrado")
+	}
+}
+
+func fillSendBuffer(c *Client) {
+	for range cap(c.send) {
+		c.send <- []byte("{}")
 	}
 }

@@ -4,30 +4,43 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
 )
 
-const sessionCookieName = "auth_token"
+const expireImmediately = -1
 
 func setSessionCookie(w http.ResponseWriter, sessionID uuid.UUID, expiresAt time.Time) {
-	http.SetCookie(w, sessionCookie("", -1, false))
-	http.SetCookie(w, sessionCookie(sessionID.String(), int(time.Until(expiresAt).Seconds()), true))
+	expireLegacyUnpartitionedCookie(w)
+
+	cookie := baseSessionCookie()
+	cookie.Value = sessionID.String()
+	cookie.MaxAge = int(time.Until(expiresAt).Seconds())
+	cookie.Partitioned = true
+	http.SetCookie(w, cookie)
 }
 
 func clearSessionCookies(w http.ResponseWriter) {
-	http.SetCookie(w, sessionCookie("", -1, false))
-	http.SetCookie(w, sessionCookie("", -1, true))
+	expireLegacyUnpartitionedCookie(w)
+
+	cookie := baseSessionCookie()
+	cookie.MaxAge = expireImmediately
+	cookie.Partitioned = true
+	http.SetCookie(w, cookie)
 }
 
-func sessionCookie(value string, maxAge int, partitioned bool) *http.Cookie {
+func expireLegacyUnpartitionedCookie(w http.ResponseWriter) {
+	cookie := baseSessionCookie()
+	cookie.MaxAge = expireImmediately
+	http.SetCookie(w, cookie)
+}
+
+func baseSessionCookie() *http.Cookie {
 	return &http.Cookie{
-		Name:        sessionCookieName,
-		Value:       value,
-		Path:        "/",
-		HttpOnly:    true,
-		Secure:      true,
-		SameSite:    http.SameSiteNoneMode,
-		MaxAge:      maxAge,
-		Partitioned: partitioned,
+		Name:     httpx.SessionCookieName,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
 	}
 }

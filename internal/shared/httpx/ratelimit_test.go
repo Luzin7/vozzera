@@ -35,7 +35,7 @@ func oneLoginPerMinute(clientIPHeader string) *RateLimiter {
 	}, clientIPHeader)
 }
 
-func TestRateLimiter_HeaderSeparaClientesAtrasDoMesmoProxy(t *testing.T) {
+func TestRateLimiter_HeaderSeparatesClientsBehindSameProxy(t *testing.T) {
 	h := oneLoginPerMinute("CF-Connecting-IP").Middleware(okHandler())
 
 	first := serve(h, loginRequest(http.MethodPost, "203.0.113.1"))
@@ -50,7 +50,7 @@ func TestRateLimiter_HeaderSeparaClientesAtrasDoMesmoProxy(t *testing.T) {
 	}
 }
 
-func TestRateLimiter_SemHeaderConfiguradoUsaRemoteAddr(t *testing.T) {
+func TestRateLimiter_EmptyHeaderConfigUsesRemoteAddr(t *testing.T) {
 	h := oneLoginPerMinute("").Middleware(okHandler())
 
 	serve(h, loginRequest(http.MethodPost, "203.0.113.1"))
@@ -61,7 +61,7 @@ func TestRateLimiter_SemHeaderConfiguradoUsaRemoteAddr(t *testing.T) {
 	}
 }
 
-func TestRateLimiter_RetryAfterEmSegundos(t *testing.T) {
+func TestRateLimiter_RetryAfterInSeconds(t *testing.T) {
 	h := oneLoginPerMinute("CF-Connecting-IP").Middleware(okHandler())
 
 	serve(h, loginRequest(http.MethodPost, "203.0.113.1"))
@@ -72,7 +72,44 @@ func TestRateLimiter_RetryAfterEmSegundos(t *testing.T) {
 	}
 }
 
-func TestEdgeMiddleware_PreflightNaoConsomeLimite(t *testing.T) {
+func TestRateLimiter_InvalidHeaderFallsBackToRemoteAddr(t *testing.T) {
+	h := oneLoginPerMinute("CF-Connecting-IP").Middleware(okHandler())
+
+	serve(h, loginRequest(http.MethodPost, "nao-e-ip"))
+	second := serve(h, loginRequest(http.MethodPost, "outro-valor-forjado"))
+
+	if second.Code != http.StatusTooManyRequests {
+		t.Errorf("segundo valor forjado do mesmo RemoteAddr = %d, want 429", second.Code)
+	}
+}
+
+func TestRateLimiter_MissingHeaderFallsBackToRemoteAddr(t *testing.T) {
+	h := oneLoginPerMinute("CF-Connecting-IP").Middleware(okHandler())
+
+	serve(h, loginRequest(http.MethodPost, ""))
+	second := serve(h, loginRequest(http.MethodPost, ""))
+
+	if second.Code != http.StatusTooManyRequests {
+		t.Errorf("segunda requisição sem header do mesmo RemoteAddr = %d, want 429", second.Code)
+	}
+}
+
+func TestRateLimiter_RetryAfterIsTimeLeftInWindow(t *testing.T) {
+	limiter := NewRateLimiter(map[string]RateLimitRule{
+		"/api/login": {Limit: 1, Window: 2 * time.Second},
+	}, "CF-Connecting-IP")
+	h := limiter.Middleware(okHandler())
+
+	serve(h, loginRequest(http.MethodPost, "203.0.113.1"))
+	time.Sleep(1100 * time.Millisecond)
+	limited := serve(h, loginRequest(http.MethodPost, "203.0.113.1"))
+
+	if got := limited.Header().Get("Retry-After"); got != "1" {
+		t.Errorf("Retry-After = %q, want %q", got, "1")
+	}
+}
+
+func TestEdgeMiddleware_PreflightDoesNotConsumeLimit(t *testing.T) {
 	h := EdgeMiddleware(okHandler(), []string{testOrigin}, oneLoginPerMinute("CF-Connecting-IP"))
 
 	serve(h, loginRequest(http.MethodOptions, "203.0.113.1"))
@@ -83,7 +120,7 @@ func TestEdgeMiddleware_PreflightNaoConsomeLimite(t *testing.T) {
 	}
 }
 
-func TestEdgeMiddleware_429SaiComCORS(t *testing.T) {
+func TestEdgeMiddleware_TooManyRequestsCarriesCORS(t *testing.T) {
 	h := EdgeMiddleware(okHandler(), []string{testOrigin}, oneLoginPerMinute("CF-Connecting-IP"))
 
 	serve(h, loginRequest(http.MethodPost, "203.0.113.1"))
