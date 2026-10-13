@@ -17,8 +17,6 @@ const (
 	maxMessageSize = 4096
 )
 
-const CloseSessionRevoked = 4001
-
 type Client struct {
 	registerer Registerer
 	conn       *websocket.Conn

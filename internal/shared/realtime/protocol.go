@@ -10,6 +10,8 @@ import (
 
 type Topic string
 
+const CloseSessionRevoked = 4001
+
 const (
 	GlobalPresenceTopic Topic = "__presence__"
 	MemberRoomListTopic Topic = "app:rooms:members"
