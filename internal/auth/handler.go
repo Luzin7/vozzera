@@ -35,6 +35,7 @@ type UpdateEmailRequest struct {
 
 type AuthDeps struct {
 	Repo             Repository
+	Transactor       Transactor
 	InviteCode       string
 	SessionTTL       time.Duration
 	PasswordResetTTL time.Duration
@@ -62,7 +63,7 @@ func RegisterHandlers(mux *http.ServeMux, deps AuthDeps) {
 		logout:               NewLogoutService(deps.Repo, deps.Revoker),
 		updateEmail:          NewUpdateEmailService(deps.Repo),
 		requestPasswordReset: NewRequestPasswordResetService(deps.Repo, deps.Mailer, deps.AppURL, deps.PasswordResetTTL),
-		resetPassword:        NewResetPasswordService(deps.Repo),
+		resetPassword:        NewResetPasswordService(deps.Transactor, deps.Revoker),
 	}
 
 	mux.HandleFunc("POST /api/register", h.handleRegister)
@@ -115,15 +116,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_token",
-		Value:    out.SessionID.String(),
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteNoneMode,
-		MaxAge:   int(time.Until(out.ExpiresAt).Seconds()),
-	})
+	setSessionCookie(w, out.SessionID, out.ExpiresAt)
 
 	httpx.WriteJSON(w, http.StatusOK, LoginPresenter(out))
 }
@@ -183,15 +176,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_token",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteNoneMode,
-		MaxAge:   -1,
-	})
+	clearSessionCookies(w)
 
 	w.WriteHeader(http.StatusNoContent)
 }

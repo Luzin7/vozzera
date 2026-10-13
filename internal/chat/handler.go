@@ -82,8 +82,7 @@ func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 
-	roomID, err := uuid.Parse(r.PathValue("id"))
-	if err != nil {
+	if _, err := uuid.Parse(r.PathValue("id")); err != nil {
 		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
 		return
 	}
@@ -107,7 +106,6 @@ func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := h.updateMessage.Execute(r.Context(), UpdateMessageInput{
-		RoomID:    roomID,
 		ContentID: contentID,
 		UserID:    claims.UserID,
 		Content:   req.Content,

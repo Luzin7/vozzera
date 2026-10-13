@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -9,15 +10,34 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type fakeTransactor struct {
+	repo Repository
+	runs int
+}
+
+func (f *fakeTransactor) WithinTx(_ context.Context, fn func(Repository) error) error {
+	f.runs++
+	return fn(f.repo)
+}
+
+func successfulResetRepo(userID uuid.UUID) *fakeRepo {
+	repo := newFakeRepo()
+	repo.consumePasswordResetToken = func(context.Context, string) (uuid.UUID, error) { return userID, nil }
+	repo.updateUserPassword = func(context.Context, UpdateUserPasswordParams) error { return nil }
+	repo.deletePasswordResetTokensByUser = func(context.Context, uuid.UUID) error { return nil }
+	repo.deleteSessionsByUser = func(context.Context, uuid.UUID) error { return nil }
+	return repo
+}
+
 func TestResetPasswordService_Execute_InvalidToken(t *testing.T) {
-	svc := NewResetPasswordService(newFakeRepo())
+	svc := NewResetPasswordService(&fakeTransactor{repo: newFakeRepo()}, &revokeRecorder{})
 
 	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "", Password: "secret123"})
 	assertStatus(t, err, http.StatusBadRequest)
 }
 
 func TestResetPasswordService_Execute_InvalidPassword(t *testing.T) {
-	svc := NewResetPasswordService(newFakeRepo())
+	svc := NewResetPasswordService(&fakeTransactor{repo: newFakeRepo()}, &revokeRecorder{})
 
 	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "abc", Password: "short"})
 	assertStatus(t, err, http.StatusBadRequest)
@@ -25,60 +45,92 @@ func TestResetPasswordService_Execute_InvalidPassword(t *testing.T) {
 
 func TestResetPasswordService_Execute_TokenNotFound(t *testing.T) {
 	repo := newFakeRepo()
-	repo.getPasswordResetTokenByHash = func(ctx context.Context, tokenHash string) (GetPasswordResetTokenByHashRow, error) {
-		return GetPasswordResetTokenByHashRow{}, pgx.ErrNoRows
+	repo.consumePasswordResetToken = func(context.Context, string) (uuid.UUID, error) {
+		return uuid.Nil, pgx.ErrNoRows
 	}
-
-	svc := NewResetPasswordService(repo)
+	revoker := &revokeRecorder{}
+	svc := NewResetPasswordService(&fakeTransactor{repo: repo}, revoker)
 
 	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "abc", Password: "secret123"})
 	assertStatus(t, err, http.StatusBadRequest)
+
+	if revoker.revokedUser != uuid.Nil {
+		t.Errorf("websockets revogados de %v com token inválido", revoker.revokedUser)
+	}
 }
 
 func TestResetPasswordService_Execute_Success(t *testing.T) {
 	userID := uuid.New()
-	tokenID := uuid.New()
-	repo := newFakeRepo()
+	repo := successfulResetRepo(userID)
 
-	repo.getPasswordResetTokenByHash = func(ctx context.Context, tokenHash string) (GetPasswordResetTokenByHashRow, error) {
-		return GetPasswordResetTokenByHashRow{ID: tokenID, UserID: userID}, nil
+	var consumedHash string
+	repo.consumePasswordResetToken = func(_ context.Context, tokenHash string) (uuid.UUID, error) {
+		consumedHash = tokenHash
+		return userID, nil
 	}
 
 	var updated UpdateUserPasswordParams
-	repo.updateUserPassword = func(ctx context.Context, arg UpdateUserPasswordParams) error {
+	repo.updateUserPassword = func(_ context.Context, arg UpdateUserPasswordParams) error {
 		updated = arg
 		return nil
 	}
 
-	var deletedToken uuid.UUID
-	repo.deletePasswordResetToken = func(ctx context.Context, id uuid.UUID) error {
-		deletedToken = id
+	var tokensDeletedFor uuid.UUID
+	repo.deletePasswordResetTokensByUser = func(_ context.Context, id uuid.UUID) error {
+		tokensDeletedFor = id
 		return nil
 	}
 
-	var revokedUser uuid.UUID
-	repo.deleteSessionsByUser = func(ctx context.Context, userID uuid.UUID) error {
-		revokedUser = userID
+	var sessionsDeletedFor uuid.UUID
+	repo.deleteSessionsByUser = func(_ context.Context, id uuid.UUID) error {
+		sessionsDeletedFor = id
 		return nil
 	}
 
-	svc := NewResetPasswordService(repo)
+	transactor := &fakeTransactor{repo: repo}
+	revoker := &revokeRecorder{}
+	svc := NewResetPasswordService(transactor, revoker)
 
 	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "abc123", Password: "newsecret123"})
 	if err != nil {
 		t.Fatalf("Execute() erro inesperado: %v", err)
 	}
 
+	if transactor.runs != 1 {
+		t.Errorf("transações = %d, want 1", transactor.runs)
+	}
+	if consumedHash != hashResetToken("abc123") {
+		t.Errorf("token consumido = %q, want o hash do token recebido", consumedHash)
+	}
 	if updated.ID != userID {
 		t.Errorf("senha atualizada para %v, want %v", updated.ID, userID)
 	}
 	if err := CheckPassword(updated.PasswordHash, "newsecret123"); err != nil {
 		t.Error("senha não foi hashada corretamente")
 	}
-	if deletedToken != tokenID {
-		t.Errorf("token apagado = %v, want %v", deletedToken, tokenID)
+	if tokensDeletedFor != userID {
+		t.Errorf("tokens apagados de %v, want %v", tokensDeletedFor, userID)
 	}
-	if revokedUser != userID {
-		t.Errorf("sessões revogadas de %v, want %v", revokedUser, userID)
+	if sessionsDeletedFor != userID {
+		t.Errorf("sessões apagadas de %v, want %v", sessionsDeletedFor, userID)
+	}
+	if revoker.revokedUser != userID {
+		t.Errorf("websockets revogados de %v, want %v", revoker.revokedUser, userID)
+	}
+}
+
+func TestResetPasswordService_Execute_FailureMidwayKeepsSessionsAlive(t *testing.T) {
+	repo := successfulResetRepo(uuid.New())
+	repo.deleteSessionsByUser = func(context.Context, uuid.UUID) error {
+		return errors.New("falha ao apagar sessões")
+	}
+	revoker := &revokeRecorder{}
+	svc := NewResetPasswordService(&fakeTransactor{repo: repo}, revoker)
+
+	_, err := svc.Execute(context.Background(), ResetPasswordInput{Token: "abc123", Password: "newsecret123"})
+	assertStatus(t, err, http.StatusInternalServerError)
+
+	if revoker.revokedUser != uuid.Nil {
+		t.Errorf("websockets revogados de %v numa redefinição que falhou", revoker.revokedUser)
 	}
 }

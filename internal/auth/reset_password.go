@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -14,12 +15,18 @@ type ResetPasswordInput struct {
 
 type ResetPasswordOutput struct{}
 
-type ResetPasswordService struct {
-	repo Repository
+type passwordChange struct {
+	tokenHash    string
+	passwordHash string
 }
 
-func NewResetPasswordService(repo Repository) *ResetPasswordService {
-	return &ResetPasswordService{repo: repo}
+type ResetPasswordService struct {
+	transactor Transactor
+	revoker    SessionRevoker
+}
+
+func NewResetPasswordService(transactor Transactor, revoker SessionRevoker) *ResetPasswordService {
+	return &ResetPasswordService{transactor: transactor, revoker: revoker}
 }
 
 func (s *ResetPasswordService) Execute(ctx context.Context, in ResetPasswordInput) (ResetPasswordOutput, error) {
@@ -31,33 +38,49 @@ func (s *ResetPasswordService) Execute(ctx context.Context, in ResetPasswordInpu
 		return ResetPasswordOutput{}, ErrInvalidPassword()
 	}
 
-	token, err := s.repo.GetPasswordResetTokenByHash(ctx, hashResetToken(in.Token))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ResetPasswordOutput{}, ErrInvalidResetToken()
-	}
-	if err != nil {
-		return ResetPasswordOutput{}, ErrGetUser(err)
-	}
-
 	hashedPassword, err := HashPassword(in.Password)
 	if err != nil {
 		return ResetPasswordOutput{}, ErrHashPassword(err)
 	}
 
-	if err := s.repo.UpdateUserPassword(ctx, UpdateUserPasswordParams{
-		ID:           token.UserID,
-		PasswordHash: hashedPassword,
-	}); err != nil {
-		return ResetPasswordOutput{}, ErrResetPassword(err)
+	change := passwordChange{tokenHash: hashResetToken(in.Token), passwordHash: hashedPassword}
+	var userID uuid.UUID
+	err = s.transactor.WithinTx(ctx, func(repo Repository) error {
+		var applyErr error
+		userID, applyErr = applyPasswordChange(ctx, repo, change)
+		return applyErr
+	})
+	if err != nil {
+		return ResetPasswordOutput{}, err
 	}
 
-	if err := s.repo.DeletePasswordResetToken(ctx, token.ID); err != nil {
-		return ResetPasswordOutput{}, ErrResetPassword(err)
-	}
-
-	if err := s.repo.DeleteSessionsByUser(ctx, token.UserID); err != nil {
+	if err := s.revoker.RevokeUser(ctx, userID); err != nil {
 		return ResetPasswordOutput{}, ErrResetPassword(err)
 	}
 
 	return ResetPasswordOutput{}, nil
+}
+
+func applyPasswordChange(ctx context.Context, repo Repository, change passwordChange) (uuid.UUID, error) {
+	userID, err := repo.ConsumePasswordResetToken(ctx, change.tokenHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrInvalidResetToken()
+	}
+	if err != nil {
+		return uuid.Nil, ErrResetPassword(err)
+	}
+
+	if err := repo.UpdateUserPassword(ctx, UpdateUserPasswordParams{ID: userID, PasswordHash: change.passwordHash}); err != nil {
+		return uuid.Nil, ErrResetPassword(err)
+	}
+
+	if err := repo.DeletePasswordResetTokensByUser(ctx, userID); err != nil {
+		return uuid.Nil, ErrResetPassword(err)
+	}
+
+	if err := repo.DeleteSessionsByUser(ctx, userID); err != nil {
+		return uuid.Nil, ErrResetPassword(err)
+	}
+
+	return userID, nil
 }

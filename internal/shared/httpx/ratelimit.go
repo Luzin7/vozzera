@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,9 +21,10 @@ type rateBucket struct {
 }
 
 type RateLimiter struct {
-	mu      sync.Mutex
-	rules   []routeRule
-	buckets map[string]*rateBucket
+	mu             sync.Mutex
+	rules          []routeRule
+	buckets        map[string]*rateBucket
+	clientIPHeader string
 }
 
 type routeRule struct {
@@ -30,7 +32,7 @@ type routeRule struct {
 	rule   RateLimitRule
 }
 
-func NewRateLimiter(rules map[string]RateLimitRule) *RateLimiter {
+func NewRateLimiter(rules map[string]RateLimitRule, clientIPHeader string) *RateLimiter {
 	ordered := make([]routeRule, 0, len(rules))
 	for prefix, rule := range rules {
 		ordered = append(ordered, routeRule{prefix: prefix, rule: rule})
@@ -41,8 +43,9 @@ func NewRateLimiter(rules map[string]RateLimitRule) *RateLimiter {
 	})
 
 	rl := &RateLimiter{
-		rules:   ordered,
-		buckets: make(map[string]*rateBucket),
+		rules:          ordered,
+		buckets:        make(map[string]*rateBucket),
+		clientIPHeader: clientIPHeader,
 	}
 
 	go rl.janitor()
@@ -72,7 +75,7 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		key := clientIP(r) + r.URL.Path
+		key := rl.clientIP(r) + r.URL.Path
 
 		rl.mu.Lock()
 		bucket, exists := rl.buckets[key]
@@ -89,7 +92,7 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 		bucket.count++
 		if bucket.count > rule.Limit {
 			rl.mu.Unlock()
-			w.Header().Set("Retry-After", rule.Window.String())
+			w.Header().Set("Retry-After", strconv.Itoa(int(rule.Window/time.Second)))
 			http.Error(w, "Muitas requisições. Tente novamente em instantes", http.StatusTooManyRequests)
 			return
 		}
@@ -108,10 +111,18 @@ func (rl *RateLimiter) ruleFor(path string) (RateLimitRule, bool) {
 	return RateLimitRule{}, false
 }
 
-func clientIP(r *http.Request) string {
+func (rl *RateLimiter) clientIP(r *http.Request) string {
+	if ip := strings.TrimSpace(r.Header.Get(rl.clientIPHeader)); ip != "" {
+		return ip
+	}
+
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+func EdgeMiddleware(next http.Handler, corsOrigins []string, limiter *RateLimiter) http.Handler {
+	return SecurityHeaders(CORS(corsOrigins)(limiter.Middleware(next)))
 }

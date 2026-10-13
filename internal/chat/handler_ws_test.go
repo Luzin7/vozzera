@@ -130,7 +130,7 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
 		pub := &fakePublisher{}
 		r := ws.NewRouter()
-		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub})
+		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub, Authorizer: &fakeAuthorizer{}})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
 		env := realtime.Envelope{V: 1, Type: CmdTypingStart, Data: data}
@@ -171,7 +171,7 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
 		pub := &fakePublisher{}
 		r := ws.NewRouter()
-		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub})
+		RegisterChatHandlers(r, ChatHandlerDeps{Registerer: reg, Publisher: pub, Authorizer: &fakeAuthorizer{}})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
 		env := realtime.Envelope{V: 1, Type: CmdTypingStop, Data: data}
@@ -220,7 +220,7 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		}
 		sender := NewSendMessageService(repo, pub)
 		r := ws.NewRouter()
-		RegisterChatHandlers(r, ChatHandlerDeps{Sender: sender, Registerer: reg, Publisher: pub})
+		RegisterChatHandlers(r, ChatHandlerDeps{Sender: sender, Registerer: reg, Publisher: pub, Authorizer: &fakeAuthorizer{}})
 
 		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String(), "content": "hello"})
 		env := realtime.Envelope{V: 1, Type: CmdMessage, Data: data}
@@ -244,6 +244,59 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		}
 		if payload.Username != username {
 			t.Errorf("username = %q, want %q", payload.Username, username)
+		}
+	})
+
+	t.Run("message em sala sem acesso não é enviada", func(t *testing.T) {
+		reg := newFakeRegisterer()
+		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
+		pub := &fakePublisher{}
+		repo := newFakeRepo()
+		created := false
+		repo.createMessage = func(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
+			created = true
+			return CreateMessageRow{}, nil
+		}
+		sender := NewSendMessageService(repo, pub)
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{
+			Sender:     sender,
+			Registerer: reg,
+			Publisher:  pub,
+			Authorizer: &fakeAuthorizer{err: errors.New("não autorizado")},
+		})
+
+		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String(), "content": "hello"})
+		if err := r.HandleMessage(client, realtime.Envelope{V: 1, Type: CmdMessage, Data: data}); err != nil {
+			t.Fatalf("HandleMessage() erro inesperado: %v", err)
+		}
+
+		if created {
+			t.Error("mensagem não deveria ter sido gravada")
+		}
+		if len(pub.envelopes) != 0 {
+			t.Errorf("envelopes = %d, want 0", len(pub.envelopes))
+		}
+	})
+
+	t.Run("typing em sala sem acesso não é publicado", func(t *testing.T) {
+		reg := newFakeRegisterer()
+		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
+		pub := &fakePublisher{}
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{
+			Registerer: reg,
+			Publisher:  pub,
+			Authorizer: &fakeAuthorizer{err: errors.New("não autorizado")},
+		})
+
+		data, _ := json.Marshal(map[string]interface{}{"room_id": roomID.String()})
+		if err := r.HandleMessage(client, realtime.Envelope{V: 1, Type: CmdTypingStart, Data: data}); err != nil {
+			t.Fatalf("HandleMessage() erro inesperado: %v", err)
+		}
+
+		if len(pub.envelopes) != 0 {
+			t.Errorf("envelopes = %d, want 0", len(pub.envelopes))
 		}
 	})
 

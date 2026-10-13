@@ -3,6 +3,7 @@ package room
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -73,11 +74,45 @@ func TestUpdateRoomService_Execute(t *testing.T) {
 			t.Errorf("name = %q, want %q", out.Room.Name, "sala atualizada")
 		}
 
-		if len(events.envelopes) != 1 {
-			t.Fatalf("envelopes = %d, want 1", len(events.envelopes))
+		wantTopics := []realtime.Topic{realtime.StaffRoomListTopic, realtime.MemberRoomListTopic}
+		if !slices.Equal(events.topics, wantTopics) {
+			t.Fatalf("topics = %v, want %v", events.topics, wantTopics)
+		}
+		if events.envelopes[1].Type != EventRoomUpdated {
+			t.Errorf("type = %q, want %q", events.envelopes[1].Type, EventRoomUpdated)
+		}
+	})
+
+	t.Run("sala que vira staff_only some para membros sem vazar o nome", func(t *testing.T) {
+		roomID := uuid.New()
+		repo := newFakeRepo()
+		repo.updateRoom = func(_ context.Context, arg UpdateRoomParams) (Room, error) {
+			return Room{ID: roomID, Name: arg.Name, StaffOnly: true}, nil
+		}
+		events := &fakePublisher{}
+		svc := NewUpdateRoomService(repo, events, &fakeRevoker{})
+
+		staffOnly := true
+		_, err := svc.Execute(context.Background(), UpdateRoomInput{ID: roomID, Name: "sala secreta", StaffOnly: &staffOnly, Claims: mod})
+		if err != nil {
+			t.Fatalf("Execute() erro inesperado: %v", err)
+		}
+
+		wantTopics := []realtime.Topic{realtime.StaffRoomListTopic, realtime.MemberRoomListTopic}
+		if !slices.Equal(events.topics, wantTopics) {
+			t.Fatalf("topics = %v, want %v", events.topics, wantTopics)
 		}
 		if events.envelopes[0].Type != EventRoomUpdated {
-			t.Errorf("type = %q, want %q", events.envelopes[0].Type, EventRoomUpdated)
+			t.Errorf("staff type = %q, want %q", events.envelopes[0].Type, EventRoomUpdated)
+		}
+		if events.envelopes[1].Type != EventRoomDeleted {
+			t.Errorf("membros type = %q, want %q", events.envelopes[1].Type, EventRoomDeleted)
+		}
+		if events.envelopes[1].Topic != realtime.Topic("room:"+roomID.String()) {
+			t.Errorf("envelope topic = %q, want room:%s", events.envelopes[1].Topic, roomID)
+		}
+		if strings.Contains(string(events.envelopes[1].Data), "sala secreta") {
+			t.Errorf("payload dos membros vazou o nome: %s", events.envelopes[1].Data)
 		}
 	})
 

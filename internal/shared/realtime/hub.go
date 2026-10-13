@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 type subscription struct {
@@ -28,6 +29,7 @@ type Hub struct {
 	subscribe   chan subscription
 	unsubscribe chan subscription
 	revoke      chan uuid.UUID
+	revokeUser  chan uuid.UUID
 	revokeTopic chan Topic
 	sync        chan chan struct{}
 	stop        chan struct{}
@@ -44,6 +46,7 @@ func NewHub() *Hub {
 		subscribe:   make(chan subscription),
 		unsubscribe: make(chan subscription),
 		revoke:      make(chan uuid.UUID),
+		revokeUser:  make(chan uuid.UUID),
 		revokeTopic: make(chan Topic),
 		sync:        make(chan chan struct{}),
 		stop:        make(chan struct{}),
@@ -130,6 +133,17 @@ func (h *Hub) Revoke(ctx context.Context, sessionID uuid.UUID) error {
 	}
 }
 
+func (h *Hub) RevokeUser(ctx context.Context, userID uuid.UUID) error {
+	select {
+	case h.revokeUser <- userID:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errors.New("hub encerrado")
+	}
+}
+
 func (h *Hub) RevokeTopic(ctx context.Context, topic Topic) error {
 	select {
 	case h.revokeTopic <- topic:
@@ -162,12 +176,13 @@ func (h *Hub) Sync(ctx context.Context) error {
 	}
 }
 
-func (h *Hub) removeClient(c *Client) {
+func (h *Hub) removeClient(c *Client, closeCode int) {
 	if _, ok := h.clients[c]; !ok {
 		return
 	}
 
 	delete(h.clients, c)
+	c.closeCode = closeCode
 	close(c.send)
 
 	for topic := range c.Topics {
@@ -187,7 +202,7 @@ func (h *Hub) removeClient(c *Client) {
 
 func (h *Hub) drain() {
 	for client := range h.clients {
-		h.removeClient(client)
+		h.removeClient(client, websocket.CloseGoingAway)
 	}
 }
 
@@ -208,12 +223,19 @@ func (h *Hub) Run() {
 			}
 
 		case client := <-h.unregister:
-			h.removeClient(client)
+			h.removeClient(client, websocket.CloseNormalClosure)
 
 		case sessionID := <-h.revoke:
 			for client := range h.clients {
 				if client.SessionID == sessionID {
-					h.removeClient(client)
+					h.removeClient(client, CloseSessionRevoked)
+				}
+			}
+
+		case userID := <-h.revokeUser:
+			for client := range h.clients {
+				if client.UserID == userID {
+					h.removeClient(client, CloseSessionRevoked)
 				}
 			}
 
@@ -252,7 +274,7 @@ func (h *Hub) Run() {
 				select {
 				case client.send <- payload.data:
 				default:
-					h.removeClient(client)
+					h.removeClient(client, websocket.CloseTryAgainLater)
 				}
 			}
 		case replyChan := <-h.sync:

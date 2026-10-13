@@ -50,3 +50,39 @@ func publishRoom(ctx context.Context, publisher realtime.Publisher, event string
 		Data:  data,
 	})
 }
+
+func publishToRoomLists(ctx context.Context, publisher realtime.Publisher, event string, room Room) error {
+	if err := publishRoom(ctx, publisher, event, realtime.StaffRoomListTopic, room); err != nil {
+		return err
+	}
+	if room.StaffOnly {
+		return hideFromMembers(ctx, publisher, event, room.ID)
+	}
+	return publishRoom(ctx, publisher, event, realtime.MemberRoomListTopic, room)
+}
+
+func hideFromMembers(ctx context.Context, publisher realtime.Publisher, event string, roomID uuid.UUID) error {
+	if event == EventRoomCreated {
+		return nil
+	}
+	return publishRoomDeleted(ctx, publisher, realtime.MemberRoomListTopic, RoomDeletedPayload{ID: roomID})
+}
+
+func publishRoomDeleted(ctx context.Context, publisher realtime.Publisher, deliveryTopic realtime.Topic, payload RoomDeletedPayload) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	return publisher.Publish(ctx, deliveryTopic, realtime.Envelope{
+		V:     1,
+		Type:  EventRoomDeleted,
+		Topic: roomTopic(payload.ID),
+		TS:    time.Now(),
+		Data:  data,
+	})
+}
+
+func roomTopic(roomID uuid.UUID) realtime.Topic {
+	return realtime.Topic("room:" + roomID.String())
+}

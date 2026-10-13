@@ -69,7 +69,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 
 	h.registerer.Register(client)
-	h.registerer.Subscribe(client, realtime.GlobalPresenceTopic)
+	for _, topic := range connectTopics(claims) {
+		h.registerer.Subscribe(client, topic)
+	}
 
 	go client.WritePump()
 	go client.ReadPump()
@@ -86,5 +88,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			client.Send(data)
 		}
 	}
+}
 
+func connectTopics(claims httpx.UserClaims) []realtime.Topic {
+	return []realtime.Topic{realtime.GlobalPresenceTopic, realtime.RoomListTopicFor(claims.CanModerate())}
 }
