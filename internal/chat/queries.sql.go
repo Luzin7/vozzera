@@ -7,6 +7,7 @@ package chat
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -95,7 +96,7 @@ SELECT
 FROM messages m
 JOIN users u ON m.user_id = u.id
 WHERE m.room_id = $1 AND m.deleted_at IS NULL
-ORDER BY m.created_at DESC
+ORDER BY m.created_at DESC, m.id DESC
 LIMIT $2
 `
 
@@ -121,6 +122,68 @@ func (q *Queries) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomPa
 	var items []GetMessagesByRoomRow
 	for rows.Next() {
 		var i GetMessagesByRoomRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.CreatedAt,
+			&i.UserID,
+			&i.Username,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMessagesByRoomBefore = `-- name: GetMessagesByRoomBefore :many
+SELECT
+    m.id,
+    m.content,
+    m.created_at,
+    u.id AS user_id,
+    u.username
+FROM messages m
+JOIN users u ON m.user_id = u.id
+WHERE m.room_id = $1
+    AND m.deleted_at IS NULL
+    AND (m.created_at, m.id) < ($3::timestamptz, $4::uuid)
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $2
+`
+
+type GetMessagesByRoomBeforeParams struct {
+	RoomID          uuid.UUID `json:"room_id"`
+	Limit           int32     `json:"limit"`
+	BeforeCreatedAt time.Time `json:"before_created_at"`
+	BeforeID        uuid.UUID `json:"before_id"`
+}
+
+type GetMessagesByRoomBeforeRow struct {
+	ID        uuid.UUID          `json:"id"`
+	Content   pgtype.Text        `json:"content"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UserID    uuid.UUID          `json:"user_id"`
+	Username  string             `json:"username"`
+}
+
+func (q *Queries) GetMessagesByRoomBefore(ctx context.Context, arg GetMessagesByRoomBeforeParams) ([]GetMessagesByRoomBeforeRow, error) {
+	rows, err := q.db.Query(ctx, getMessagesByRoomBefore,
+		arg.RoomID,
+		arg.Limit,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetMessagesByRoomBeforeRow
+	for rows.Next() {
+		var i GetMessagesByRoomBeforeRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Content,

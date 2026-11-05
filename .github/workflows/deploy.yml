@@ -26,7 +26,8 @@ jobs:
 
       - name: Install Goose
         run: |
-          curl -fsSL https://raw.githubusercontent.com/pressly/goose/master/install.sh | sh
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/pressly/goose/master/install.sh | sh -s v3.27.3
           echo "$HOME/bin" >> $GITHUB_PATH
 
       - name: Run Migrations on Neon

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
@@ -75,5 +76,49 @@ func TestHandleDeleteMessage_DeniesRoomWithoutAccess(t *testing.T) {
 	}
 	if deleted {
 		t.Error("mensagem apagada numa sala sem acesso")
+	}
+}
+
+func TestHandleGetMessages_NextBeforeHeader(t *testing.T) {
+	repo := newFakeRepo()
+	repo.getMessagesByRoom = func(context.Context, GetMessagesByRoomParams) ([]GetMessagesByRoomRow, error) {
+		return rowsDescending(3, time.Now()), nil
+	}
+	path := "/api/rooms/" + uuid.NewString() + "/messages?limit=2"
+
+	w := httptest.NewRecorder()
+	newChatMux(repo, nil).ServeHTTP(w, authenticatedRequest(http.MethodGet, path, ""))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if w.Header().Get("X-Next-Before") == "" {
+		t.Error("X-Next-Before ausente com mais páginas")
+	}
+}
+
+func TestHandleGetMessages_NoNextBeforeHeaderOnLastPage(t *testing.T) {
+	repo := newFakeRepo()
+	repo.getMessagesByRoom = func(context.Context, GetMessagesByRoomParams) ([]GetMessagesByRoomRow, error) {
+		return rowsDescending(2, time.Now()), nil
+	}
+	path := "/api/rooms/" + uuid.NewString() + "/messages?limit=2"
+
+	w := httptest.NewRecorder()
+	newChatMux(repo, nil).ServeHTTP(w, authenticatedRequest(http.MethodGet, path, ""))
+
+	if got := w.Header().Get("X-Next-Before"); got != "" {
+		t.Errorf("X-Next-Before = %q, want empty", got)
+	}
+}
+
+func TestHandleGetMessages_InvalidBeforeIs400(t *testing.T) {
+	path := "/api/rooms/" + uuid.NewString() + "/messages?before=lixo"
+
+	w := httptest.NewRecorder()
+	newChatMux(newFakeRepo(), nil).ServeHTTP(w, authenticatedRequest(http.MethodGet, path, ""))
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }

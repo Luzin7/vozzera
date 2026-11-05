@@ -11,6 +11,8 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 )
 
+const nextBeforeHeader = "X-Next-Before"
+
 type UpdateMessageRequest struct {
 	Content string `json:"content"`
 }
@@ -70,12 +72,16 @@ func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 	out, err := h.getMessages.Execute(r.Context(), GetMessagesInput{
 		RoomID: roomID,
 		Limit:  limit,
+		Before: r.URL.Query().Get("before"),
 	})
 	if err != nil {
 		httpx.WriteError(w, err)
 		return
 	}
 
+	if out.NextBefore != "" {
+		w.Header().Set(nextBeforeHeader, out.NextBefore)
+	}
 	httpx.WriteJSON(w, http.StatusOK, MessagesPresenter(out.Messages))
 }
 

@@ -25,3 +25,6 @@ vendor/
 *.swp
 *.swo
 DESIGN-CONTEXT.md
+
+# Docker
+.docker/

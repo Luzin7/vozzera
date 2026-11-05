@@ -10,6 +10,7 @@ var (
 	ErrInvalidContent      = httpx.Errorf(http.StatusBadRequest, "Mensagem deve ter entre 1 e 4000 caracteres")
 	ErrEmptyContent        = httpx.Errorf(http.StatusBadRequest, "O conteúdo não pode ser vazio")
 	ErrContentTooLong      = httpx.Errorf(http.StatusBadRequest, "O conteúdo deve ter no máximo 4000 caracteres")
+	ErrInvalidCursor       = httpx.Errorf(http.StatusBadRequest, "Cursor de paginação inválido")
 	ErrRoomNotFound        = httpx.Errorf(http.StatusNotFound, "Sala não encontrada")
 	ErrMessageNotEditable  = httpx.Errorf(http.StatusForbidden, "Mensagem não encontrada ou você não tem permissão para editá-la")
 	ErrMessageNotDeletable = httpx.Errorf(http.StatusForbidden, "Mensagem não encontrada ou você não tem permissão para deletá-la")

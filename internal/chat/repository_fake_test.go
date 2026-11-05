@@ -7,6 +7,7 @@ import (
 
 type fakeRepo struct {
 	getMessagesByRoom func(context.Context, GetMessagesByRoomParams) ([]GetMessagesByRoomRow, error)
+	getMessagesBefore func(context.Context, GetMessagesByRoomBeforeParams) ([]GetMessagesByRoomBeforeRow, error)
 	updateMessage     func(context.Context, UpdateMessageParams) (UpdateMessageRow, error)
 	deleteMessage     func(context.Context, DeleteMessageParams) (DeleteMessageRow, error)
 	createMessage     func(context.Context, CreateMessageParams) (CreateMessageRow, error)
@@ -16,6 +17,9 @@ func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		getMessagesByRoom: func(context.Context, GetMessagesByRoomParams) ([]GetMessagesByRoomRow, error) {
 			return nil, errors.New("getMessagesByRoom não configurado")
+		},
+		getMessagesBefore: func(context.Context, GetMessagesByRoomBeforeParams) ([]GetMessagesByRoomBeforeRow, error) {
+			return nil, errors.New("getMessagesBefore não configurado")
 		},
 		updateMessage: func(context.Context, UpdateMessageParams) (UpdateMessageRow, error) {
 			return UpdateMessageRow{}, errors.New("updateMessage não configurado")
@@ -31,6 +35,10 @@ func newFakeRepo() *fakeRepo {
 
 func (f *fakeRepo) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomParams) ([]GetMessagesByRoomRow, error) {
 	return f.getMessagesByRoom(ctx, arg)
+}
+
+func (f *fakeRepo) GetMessagesByRoomBefore(ctx context.Context, arg GetMessagesByRoomBeforeParams) ([]GetMessagesByRoomBeforeRow, error) {
+	return f.getMessagesBefore(ctx, arg)
 }
 
 func (f *fakeRepo) UpdateMessage(ctx context.Context, arg UpdateMessageParams) (UpdateMessageRow, error) {
