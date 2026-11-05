@@ -2,10 +2,13 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestRegisterService_Execute_Validation(t *testing.T) {
@@ -82,5 +85,60 @@ func TestRegisterService_Execute_Success(t *testing.T) {
 	}
 	if out.Username != "luand" {
 		t.Errorf("out.Username = %q, want %q", out.Username, "luand")
+	}
+}
+
+func TestRegisterService_Execute_CreateUserFailure(t *testing.T) {
+	tests := []struct {
+		name    string
+		repoErr error
+		status  int
+		message string
+	}{
+		{
+			name:    "unique no username",
+			repoErr: &pgconn.PgError{Code: "23505", ConstraintName: "users_username_key"},
+			status:  http.StatusConflict,
+			message: ErrUsernameTaken(nil).(*httpx.Error).Message,
+		},
+		{
+			name:    "unique no email",
+			repoErr: &pgconn.PgError{Code: "23505", ConstraintName: "users_email_key"},
+			status:  http.StatusConflict,
+			message: ErrEmailTaken().(*httpx.Error).Message,
+		},
+		{
+			name:    "unique em outra constraint",
+			repoErr: &pgconn.PgError{Code: "23505", ConstraintName: "users_pkey"},
+			status:  http.StatusInternalServerError,
+			message: ErrCreateUser(nil).(*httpx.Error).Message,
+		},
+		{
+			name:    "falha de infraestrutura",
+			repoErr: errors.New("conexão recusada"),
+			status:  http.StatusInternalServerError,
+			message: ErrCreateUser(nil).(*httpx.Error).Message,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			repo.createUser = func(context.Context, CreateUserParams) (CreateUserRow, error) {
+				return CreateUserRow{}, tt.repoErr
+			}
+			svc := NewRegisterService(repo, "invite")
+
+			_, err := svc.Execute(context.Background(), RegisterInput{
+				Username: "luand", Password: "secret123", Email: "luan@example.com", InviteCode: "invite",
+			})
+
+			assertStatus(t, err, tt.status)
+			var e *httpx.Error
+			errors.As(err, &e)
+			if e.Message != tt.message {
+				t.Errorf("message = %q, want %q", e.Message, tt.message)
+			}
+		})
 	}
 }
