@@ -1,13 +1,24 @@
 package config
 
 import (
+	"errors"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
+
+var (
+	ErrKeyValueURLRequired   = errors.New("KEY_VALUE_URL é obrigatória")
+	ErrKeyValuePrefixInvalid = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
+
+	keyValuePrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+)
+
+const keyValueNamespace = "vz:"
 
 type SendGridConfig struct {
 	APIKey      string
@@ -22,6 +33,8 @@ type Config struct {
 	LiveKitURL         string
 	LiveKitAPIKey      string
 	LiveKitAPISecret   string
+	KeyValueURL        string
+	KeyValuePrefix     string
 	CORSOrigins        []string
 	SessionTTL         time.Duration
 	SessionTouchWindow time.Duration
@@ -46,6 +59,8 @@ func Load() *Config {
 		LiveKitURL:         os.Getenv("LIVEKIT_URL"),
 		LiveKitAPIKey:      os.Getenv("LIVEKIT_API_KEY"),
 		LiveKitAPISecret:   os.Getenv("LIVEKIT_API_SECRET"),
+		KeyValueURL:        os.Getenv("KEY_VALUE_URL"),
+		KeyValuePrefix:     os.Getenv("KEY_VALUE_PREFIX"),
 		CORSOrigins:        splitList(os.Getenv("CORS_ORIGINS")),
 		SessionTTL:         durationEnv("SESSION_TTL", 7*24*time.Hour),
 		SessionTouchWindow: durationEnv("SESSION_TOUCH_WINDOW", 24*time.Hour),
@@ -58,6 +73,20 @@ func Load() *Config {
 			FromName:    os.Getenv("MAIL_FROM_NAME"),
 		},
 	}
+}
+
+func (c *Config) ValidateKeyValue() error {
+	if c.KeyValueURL == "" {
+		return ErrKeyValueURLRequired
+	}
+	if !keyValuePrefixPattern.MatchString(c.KeyValuePrefix) {
+		return ErrKeyValuePrefixInvalid
+	}
+	return nil
+}
+
+func (c *Config) KeyValueKeyPrefix() string {
+	return keyValueNamespace + c.KeyValuePrefix
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {

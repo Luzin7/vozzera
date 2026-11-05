@@ -21,6 +21,7 @@ type Client struct {
 	registerer Registerer
 	conn       *websocket.Conn
 	send       chan []byte
+	ConnID     uuid.UUID
 	UserID     uuid.UUID
 	Username   string
 	SessionID  uuid.UUID
@@ -37,6 +38,7 @@ func NewClient(registerer Registerer, conn *websocket.Conn, userID uuid.UUID, us
 		registerer: registerer,
 		conn:       conn,
 		send:       make(chan []byte, 256),
+		ConnID:     uuid.New(),
 		UserID:     userID,
 		Username:   username,
 		SessionID:  sessionID,

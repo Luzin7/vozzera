@@ -7,11 +7,13 @@ Obrigado por querer contribuir. Antes de abrir PR, leia isto aqui — é curto.
 ```bash
 git clone <fork>
 cd vozzera
-cp .env.example .env           # preencha INVITE_CODE e LiveKit
-docker compose -f docker-compose.dev.yml up -d
+cp .env.example .env           # preencha INVITE_CODE, LiveKit, KEY_VALUE_URL e KEY_VALUE_PREFIX
+docker compose -f docker-compose.dev.yml up -d   # Postgres e Valkey
 make migrate-up
 make run
 ```
+
+`KEY_VALUE_URL` (local: `redis://localhost:6379/0`) e `KEY_VALUE_PREFIX` (local: `dev`) são obrigatórias: sem elas o servidor encerra na subida. Os testes de Key Value usam `KV_TEST_URL=redis://localhost:6379/15` e são pulados sem ela (falham no CI).
 
 Servidor sobe em `http://localhost:8080`. Pra confirmar que tá tudo pé:
 
