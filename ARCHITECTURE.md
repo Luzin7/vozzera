@@ -169,6 +169,12 @@ Para usar no código do domínio, basta chamar `auth.New(pool)` ou `chat.New(poo
 
 ---
 
+## Deploy
+
+Deploy de produção: push no main → migrate → build → deploy hook do Render (auto-deploy desligado). O hook é chamado com `ref` igual ao commit testado, migrado e buildado (`GITHUB_SHA`), então um push mais novo nunca sobe sem passar pela própria pipeline. Toda migration precisa funcionar com a versão que está no ar; drop/rename só no release seguinte. O `deploy.yml` roda as migrations (goose) a cada push na `main`. A API pública fica em `https://vozzera.onrender.com` (Render, plano Free, região Virginia).
+
+---
+
 ## O Que Já Temos
 
 | Domínio    | Status       | Detalhes |
