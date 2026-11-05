@@ -65,3 +65,7 @@ type PresenceHook interface {
 	HandleClientConnected(userID uuid.UUID, username string)
 	HandleClientDisconnected(userID uuid.UUID, username string)
 }
+
+type ConnectionClosedHook interface {
+	HandleConnectionClosed(c *Client)
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -25,6 +26,8 @@ type Hub struct {
 	clients     map[*Client]bool
 	topics      map[Topic]map[*Client]bool
 	presence    PresenceHook
+	closedHooks []ConnectionClosedHook
+	hooksWg     sync.WaitGroup
 	broadcast   chan broadcastPayload
 	register    chan *Client
 	unregister  chan *Client
@@ -58,6 +61,25 @@ func NewHub() *Hub {
 
 func (h *Hub) SetPresence(p PresenceHook) {
 	h.presence = p
+}
+
+func (h *Hub) AddConnectionClosedHook(hook ConnectionClosedHook) {
+	h.closedHooks = append(h.closedHooks, hook)
+}
+
+func (h *Hub) WaitConnectionClosedHooks(ctx context.Context) error {
+	finished := make(chan struct{})
+	go func() {
+		h.hooksWg.Wait()
+		close(finished)
+	}()
+
+	select {
+	case <-finished:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (h *Hub) Shutdown(ctx context.Context) error {
@@ -196,6 +218,15 @@ func (h *Hub) removeClient(c *Client, closeCode int) {
 		}
 	}
 	c.Topics = make(map[Topic]bool)
+
+	c.ctxCancel()
+	for _, hook := range h.closedHooks {
+		h.hooksWg.Add(1)
+		go func() {
+			defer h.hooksWg.Done()
+			hook.HandleConnectionClosed(c)
+		}()
+	}
 
 	if h.presence != nil {
 		go h.presence.HandleClientDisconnected(c.UserID, c.Username)

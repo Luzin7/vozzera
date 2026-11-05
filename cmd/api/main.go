@@ -13,6 +13,7 @@ import (
 
 	"github.com/Luzin7/vozzera-backend/internal/auth"
 	"github.com/Luzin7/vozzera-backend/internal/chat"
+	"github.com/Luzin7/vozzera-backend/internal/infra/keyvalue"
 	"github.com/Luzin7/vozzera-backend/internal/infra/sendgrid"
 	"github.com/Luzin7/vozzera-backend/internal/presence"
 	"github.com/Luzin7/vozzera-backend/internal/room"
@@ -23,10 +24,15 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/swagger"
 	"github.com/Luzin7/vozzera-backend/internal/transport/ws"
 	"github.com/Luzin7/vozzera-backend/internal/voice"
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.ValidateKeyValue(); err != nil {
+		log.Fatalf("Configuração do Key Value inválida: %v", err)
+	}
 
 	rootCtx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -59,6 +65,16 @@ func main() {
 		log.Println("Encerrando pool de conexões com o banco...")
 		pool.Close()
 	}()
+
+	kvClient, err := keyvalue.NewClient(cfg.KeyValueURL)
+	if err != nil {
+		log.Fatalf("Configuração do Key Value inválida: %v", err)
+	}
+	defer kvClient.Close()
+	kvStartedDown := !logKeyValueStartup(initCtx, kvClient, cfg.KeyValuePrefix)
+
+	instanceID := uuid.New()
+	voiceState := voice.NewKVVoiceRoomState(kvClient, cfg.KeyValueKeyPrefix())
 
 	authQueries := auth.New(pool)
 	chatQueries := chat.New(pool)
@@ -103,9 +119,9 @@ func main() {
 	}
 
 	hub.SetPresence(presenceSvc)
+	hub.AddConnectionClosedHook(voice.NewReleaseAwayOnCloseHook(voice.NewReleaseAwayService(voiceState, hub), instanceID))
 	go hub.Run()
 
-	voicePresence := voice.NewVoiceRoomPresence()
 	sender := chat.NewSendMessageService(chatQueries, hub)
 	wsRouter := ws.NewRouter()
 
@@ -118,7 +134,21 @@ func main() {
 		AllowedOrigins: cfg.CORSOrigins,
 	})
 	var bgWg sync.WaitGroup
-	bgWg.Add(2)
+	bgWg.Add(4)
+	go func() {
+		defer bgWg.Done()
+		voice.NewInstanceHeartbeat(voice.InstanceHeartbeatDeps{
+			State:       voiceState,
+			InstanceID:  instanceID,
+			Hydrator:    voice.NewHydratePresenceService(voice.NewLiveKitRoomLister(cfg.LiveKitURL, cfg.LiveKitAPIKey, cfg.LiveKitAPISecret), voiceState, hub),
+			Publisher:   hub,
+			StartedDown: kvStartedDown,
+		}).Run(rootCtx)
+	}()
+	go func() {
+		defer bgWg.Done()
+		voice.NewAwaySweeper(voice.NewSweepAwayService(voiceState, hub)).Run(rootCtx)
+	}()
 	go func() {
 		defer bgWg.Done()
 		cleanupExpiredSessions(rootCtx, authQueries)
@@ -199,7 +229,15 @@ func main() {
 		Registerer: hub,
 		Publisher:  hub,
 		Authorizer: room.NewRoomAuthorizer(roomQueries),
-		Presence:   voicePresence,
+		RoomSnapshots: []chat.RoomSnapshotProvider{
+			voice.NewRoomSnapshotProvider(voiceState),
+		},
+	})
+
+	voice.RegisterAwayHandlers(wsRouter, voice.AwayHandlerDeps{
+		Enter:      voice.NewEnterAwayService(voiceState, room.NewRoomAuthorizer(roomQueries), hub),
+		Leave:      voice.NewLeaveAwayService(voiceState, hub),
+		InstanceID: instanceID,
 	})
 
 	voice.RegisterHandlers(mux, voice.VoiceDeps{
@@ -209,7 +247,7 @@ func main() {
 		AuthMW:     authMw,
 		ApiKey:     cfg.LiveKitAPIKey,
 		ApiSecret:  cfg.LiveKitAPISecret,
-		Presence:   voicePresence,
+		State:      voiceState,
 		Publisher:  hub,
 	})
 	swagger.RegisterHandlers(mux)
@@ -255,6 +293,10 @@ func main() {
 
 	if err := hub.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Erro durante drenagem do Hub de WebSockets: %v", err)
+	}
+
+	if err := hub.WaitConnectionClosedHooks(shutdownCtx); err != nil {
+		log.Printf("Erro aguardando liberação de ausentes no encerramento: %v", err)
 	}
 
 	bgWg.Wait()
@@ -316,4 +358,15 @@ func logClientIPSource(header string) {
 		return
 	}
 	log.Printf("Rate limit identifica o cliente pelo header %s", header)
+}
+
+func logKeyValueStartup(ctx context.Context, client *redis.Client, prefix string) bool {
+	version, err := keyvalue.ServerVersion(ctx, client)
+	if err != nil {
+		log.Printf("kv.unreachable_at_startup level=error err=%q", err)
+		return false
+	}
+
+	log.Printf("kv.connected server_version=%s prefix=%s pool_size=%d", version, prefix, client.Options().PoolSize)
+	return true
 }
