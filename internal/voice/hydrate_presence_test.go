@@ -12,14 +12,14 @@ import (
 )
 
 type fakeRoomLister struct {
-	rooms          []string
+	rooms          []LiveKitRoom
 	participants   map[string][]Participant
 	listRoomsErr   error
 	participantErr map[string]error
 	blockUntilDone bool
 }
 
-func (f *fakeRoomLister) ListRoomNames(ctx context.Context) ([]string, error) {
+func (f *fakeRoomLister) ListRooms(ctx context.Context) ([]LiveKitRoom, error) {
 	if f.blockUntilDone {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -41,7 +41,7 @@ func TestHydratePresenceService_PreencheSalasEPublicaSnapshot(t *testing.T) {
 	buf := captureLog(t)
 	roomID, userID := uuid.New(), uuid.New()
 	lister := &fakeRoomLister{
-		rooms:        []string{roomID.String()},
+		rooms:        []LiveKitRoom{{Name: roomID.String(), CreatedAt: time.UnixMilli(sessionCreatedMs)}},
 		participants: map[string][]Participant{roomID.String(): {participantOf(userID, "sid-a")}},
 	}
 
@@ -53,8 +53,11 @@ func TestHydratePresenceService_PreencheSalasEPublicaSnapshot(t *testing.T) {
 	if got := mustSnapshot(t, state, roomID).Participants; len(got) != 1 || got[0].SID != "sid-a" {
 		t.Errorf("participantes = %+v, want sid-a", got)
 	}
-	if got := publisher.types(); len(got) != 1 || got[0] != realtime.PresenceSnapshot {
-		t.Errorf("publicado = %v, want só o snapshot de presença", got)
+	if got := publisher.types(); len(got) != 2 || got[0] != realtime.PresenceSnapshot || got[1] != EventSessionSnapshot {
+		t.Errorf("publicado = %v, want snapshot de presença e de sessão", got)
+	}
+	if got := string(publisher.last().Data); got != `{"started_at":"2023-11-14T22:13:20.123Z"}` {
+		t.Errorf("sessão = %s, want o horário de criação da sala", got)
 	}
 	if !strings.Contains(buf.String(), "voice.hydrate rooms=1 participants=1 skipped_rooms=0 duration_ms=") {
 		t.Errorf("log = %q, want resumo do voice.hydrate", buf.String())
@@ -66,7 +69,7 @@ func TestHydratePresenceService_IgnoraSalasENomesQueNaoSaoUUID(t *testing.T) {
 	publisher := &lockedPublisher{}
 	roomID, userID := uuid.New(), uuid.New()
 	lister := &fakeRoomLister{
-		rooms: []string{"sala-legada", roomID.String()},
+		rooms: []LiveKitRoom{{Name: "sala-legada"}, {Name: roomID.String()}},
 		participants: map[string][]Participant{
 			roomID.String(): {participantOf(userID, "sid-a"), {SID: "sid-bot", UserID: "agent-123", Username: "bot"}},
 		},
@@ -92,7 +95,7 @@ func TestHydratePresenceService_NaoSobrescreveSalaExistente(t *testing.T) {
 	roomID := uuid.New()
 	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-webhook"), at(0))
 	lister := &fakeRoomLister{
-		rooms:        []string{roomID.String()},
+		rooms:        []LiveKitRoom{{Name: roomID.String()}},
 		participants: map[string][]Participant{roomID.String(): {participantOf(uuid.New(), "sid-hydrated")}},
 	}
 
@@ -122,7 +125,7 @@ func TestHydratePresenceService_FalhaEmUmaSalaContaComoPuladaEContinua(t *testin
 	publisher := &lockedPublisher{}
 	broken, healthy := uuid.New(), uuid.New()
 	lister := &fakeRoomLister{
-		rooms:          []string{broken.String(), healthy.String()},
+		rooms:          []LiveKitRoom{{Name: broken.String()}, {Name: healthy.String()}},
 		participants:   map[string][]Participant{healthy.String(): {participantOf(uuid.New(), "sid-a")}},
 		participantErr: map[string]error{broken.String(): errors.New("timeout")},
 	}
@@ -154,5 +157,21 @@ func TestHydratePresenceService_RespeitaOTetoDeCincoSegundos(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Errorf("Execute demorou %v", time.Since(start))
+	}
+}
+
+func TestHydratePresenceService_SalaSemCriacaoLogaAviso(t *testing.T) {
+	buf := captureLog(t)
+	roomID := uuid.New()
+	lister := &fakeRoomLister{
+		rooms:        []LiveKitRoom{{Name: roomID.String()}},
+		participants: map[string][]Participant{roomID.String(): {participantOf(uuid.New(), "sid-a")}},
+	}
+
+	newHydrateService(lister, newTestState(), &lockedPublisher{}).Execute(context.Background())
+
+	want := "voice.session level=warn cause=missing_room_creation_time step=hydrate room_id=" + roomID.String()
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("log = %q, want %q", buf.String(), want)
 	}
 }

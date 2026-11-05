@@ -17,3 +17,20 @@ func TestActiveCountFromReply(t *testing.T) {
 		}
 	}
 }
+
+func TestHydrateResultFromReply(t *testing.T) {
+	result, err := hydrateResultFrom([]any{int64(1), "1700000000123"})
+	if err != nil || !result.Written || result.SessionStartedAt == nil {
+		t.Fatalf("result = %+v, err = %v, want Written com sessão", result, err)
+	}
+
+	for name, reply := range map[string][]any{
+		"flag string": {"1", ""},
+		"flag nil":    {nil, ""},
+		"tamanho":     {int64(1)},
+	} {
+		if _, err := hydrateResultFrom(reply); !errors.Is(err, errUnexpectedScriptReply) {
+			t.Errorf("%s: err = %v, want errUnexpectedScriptReply", name, err)
+		}
+	}
+}

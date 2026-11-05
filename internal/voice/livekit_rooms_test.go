@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/livekit/protocol/auth"
@@ -75,16 +76,16 @@ func newFakeLiveKitServer(t *testing.T, rooms []*livekit.Room, participants []*l
 
 func TestLiveKitRoomLister_ListaSalasComTokenRoomList(t *testing.T) {
 	roomID := uuid.NewString()
-	server, requests := newFakeLiveKitServer(t, []*livekit.Room{{Name: roomID}}, nil)
+	server, requests := newFakeLiveKitServer(t, []*livekit.Room{{Name: roomID, CreationTimeMs: 1_700_000_000_123}}, nil)
 	lister := newLiveKitRoomListerWithClient(server.URL, webhookKey, webhookSecret, server.Client())
 
-	names, err := lister.ListRoomNames(context.Background())
+	rooms, err := lister.ListRooms(context.Background())
 
 	if err != nil {
-		t.Fatalf("ListRoomNames erro: %v", err)
+		t.Fatalf("ListRooms erro: %v", err)
 	}
-	if len(names) != 1 || names[0] != roomID {
-		t.Errorf("names = %v, want [%s]", names, roomID)
+	if len(rooms) != 1 || rooms[0].Name != roomID || rooms[0].CreatedAt.UnixMilli() != 1_700_000_000_123 {
+		t.Errorf("rooms = %v, want [%s] criada em 1700000000123", rooms, roomID)
 	}
 	got := requests()
 	if len(got) != 1 || !strings.HasSuffix(got[0].path, "/ListRooms") || !got[0].grant.RoomList {
@@ -118,7 +119,26 @@ func TestLiveKitRoomLister_ErroHTTPViraErro(t *testing.T) {
 	defer server.Close()
 	lister := newLiveKitRoomListerWithClient(server.URL, webhookKey, webhookSecret, server.Client())
 
-	if _, err := lister.ListRoomNames(context.Background()); err == nil {
-		t.Fatal("ListRoomNames deveria devolver erro")
+	if _, err := lister.ListRooms(context.Background()); err == nil {
+		t.Fatal("ListRooms deveria devolver erro")
+	}
+}
+
+func TestRoomCreationTime(t *testing.T) {
+	cases := map[string]struct {
+		room *livekit.Room
+		want time.Time
+	}{
+		"milissegundos preferidos": {&livekit.Room{CreationTime: 1_700_000_000, CreationTimeMs: 1_700_000_000_123}, time.UnixMilli(1_700_000_000_123).UTC()},
+		"segundos como fallback":   {&livekit.Room{CreationTime: 1_700_000_000}, time.Unix(1_700_000_000, 0).UTC()},
+		"zero quando ausente":      {&livekit.Room{Name: "x"}, time.Time{}},
+		"zero para sala nula":      {nil, time.Time{}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := roomCreationTime(tc.room); !got.Equal(tc.want) {
+				t.Errorf("roomCreationTime = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

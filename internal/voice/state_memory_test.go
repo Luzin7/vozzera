@@ -19,7 +19,7 @@ func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
 func TestMemoryVoiceRoomState_Contract(t *testing.T) {
 	runVoiceRoomStateContract(t, func(t *testing.T) contractHarness {
 		state := newMemoryVoiceRoomState((&fakeClock{now: contractEpoch}).Now)
-		return contractHarness{state: state, expireInstance: state.expireInstance}
+		return contractHarness{state: state, expireInstance: state.expireInstance, dropSession: state.dropSession}
 	})
 }
 
@@ -62,4 +62,11 @@ func TestMemoryVoiceRoomState_BeatRenovaHeartbeat(t *testing.T) {
 	if len(removed) != 0 {
 		t.Fatalf("removed = %+v, want nenhum após renovar o heartbeat", removed)
 	}
+}
+
+func (s *memoryVoiceRoomState) dropSession(roomID uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.sessions, roomID)
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
 	"github.com/livekit/protocol/auth"
 )
@@ -21,19 +22,21 @@ const (
 )
 
 type webhookEventSpec struct {
-	event     string
-	eventID   string
-	roomID    uuid.UUID
-	userID    uuid.UUID
-	sid       string
-	createdAt int64
+	event          string
+	eventID        string
+	roomID         uuid.UUID
+	userID         uuid.UUID
+	sid            string
+	createdAt      int64
+	roomCreatedMs  int64
+	roomCreatedSec int64
 }
 
 func signedWebhookRequest(t *testing.T, spec webhookEventSpec) *http.Request {
 	t.Helper()
 
-	body := fmt.Sprintf(`{"event":%q,"id":%q,"createdAt":"%d","room":{"name":%q},"participant":{"sid":%q,"identity":%q,"name":"alice","joinedAt":"%d"}}`,
-		spec.event, spec.eventID, spec.createdAt, spec.roomID, spec.sid, spec.userID, spec.createdAt-60)
+	body := fmt.Sprintf(`{"event":%q,"id":%q,"createdAt":"%d","room":{"name":%q%s},"participant":{"sid":%q,"identity":%q,"name":"alice","joinedAt":"%d"}}`,
+		spec.event, spec.eventID, spec.createdAt, spec.roomID, roomCreationJSON(spec), spec.sid, spec.userID, spec.createdAt-60)
 	sum := sha256.Sum256([]byte(body))
 	token, err := auth.NewAccessToken(webhookKey, webhookSecret).
 		SetSha256(base64.StdEncoding.EncodeToString(sum[:])).
@@ -46,6 +49,17 @@ func signedWebhookRequest(t *testing.T, spec webhookEventSpec) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/api/voice/webhook", strings.NewReader(body))
 	req.Header.Set("Authorization", token)
 	return req
+}
+
+func roomCreationJSON(spec webhookEventSpec) string {
+	fields := ""
+	if spec.roomCreatedSec != 0 {
+		fields += fmt.Sprintf(`,"creationTime":"%d"`, spec.roomCreatedSec)
+	}
+	if spec.roomCreatedMs != 0 {
+		fields += fmt.Sprintf(`,"creationTimeMs":"%d"`, spec.roomCreatedMs)
+	}
+	return fields
 }
 
 func serveWebhook(handler *WebhookHandler, req *http.Request) int {
@@ -76,8 +90,8 @@ func TestWebhook_JoinedGravaNoEstadoEPublicaPresenca(t *testing.T) {
 	if got := mustSnapshot(t, state, roomID).Participants; len(got) != 1 || got[0].SID != "sid-a" {
 		t.Errorf("participantes = %+v, want sid-a", got)
 	}
-	if got := publisher.types(); len(got) != 1 || got[0] != "voice.presence.joined" {
-		t.Errorf("publicado = %v, want [voice.presence.joined]", got)
+	if got := publisher.types(); len(got) != 2 || got[0] != "voice.presence.joined" || got[1] != EventSessionSnapshot {
+		t.Errorf("publicado = %v, want [voice.presence.joined %s]", got, EventSessionSnapshot)
 	}
 }
 
@@ -92,7 +106,7 @@ func TestWebhook_JoinedUsaCreatedAtEmMilissegundosParaLimparAusente(t *testing.T
 		t.Fatalf("status = %d, want 200", status)
 	}
 	assertAwayUsers(t, mustSnapshot(t, state, roomID))
-	want := []string{"voice.presence.joined", EventAwaySnapshot, EventAwayEnded}
+	want := []string{"voice.presence.joined", EventSessionSnapshot, EventAwaySnapshot, EventAwayEnded}
 	if got := publisher.types(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("publicado = %v, want %v", got, want)
 	}
@@ -124,7 +138,7 @@ func TestWebhook_LeftSempreRepublicaPresencaMesmoReenviado(t *testing.T) {
 	if first != http.StatusOK || second != http.StatusOK {
 		t.Fatalf("status = %d e %d, want 200", first, second)
 	}
-	want := []string{"voice.presence.left", EventAwaySnapshot, "voice.presence.left", EventAwaySnapshot}
+	want := []string{"voice.presence.left", EventSessionSnapshot, EventAwaySnapshot, "voice.presence.left", EventSessionSnapshot, EventAwaySnapshot}
 	if got := publisher.types(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("publicado = %v, want %v", got, want)
 	}
@@ -143,7 +157,7 @@ func TestWebhook_LeftReenviadoDepoisDeAplicadoAindaPublicaSnapshotDeAusentesVazi
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
 	}
-	want := []string{"voice.presence.left", EventAwaySnapshot}
+	want := []string{"voice.presence.left", EventSessionSnapshot, EventAwaySnapshot}
 	if got := publisher.types(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("publicado = %v, want %v", got, want)
 	}
@@ -163,7 +177,7 @@ func TestWebhook_LeftDoUltimoAtivoLimpaAusentes(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
 	}
-	want := []string{"voice.presence.left", EventAwaySnapshot, EventAwayEnded}
+	want := []string{"voice.presence.left", EventSessionSnapshot, EventAwaySnapshot, EventAwayEnded}
 	if got := publisher.types(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("publicado = %v, want %v", got, want)
 	}
@@ -172,8 +186,8 @@ func TestWebhook_LeftDoUltimoAtivoLimpaAusentes(t *testing.T) {
 	if payload.Reason != AwayEndedRoomEmpty || payload.UserID != awayUser {
 		t.Errorf("payload = %+v, want room_empty do ausente", payload)
 	}
-	if string(publisher.envelopes[1].Data) != "[]" {
-		t.Errorf("snapshot de ausentes = %s, want []", publisher.envelopes[1].Data)
+	if string(publisher.envelopes[2].Data) != "[]" {
+		t.Errorf("snapshot de ausentes = %s, want []", publisher.envelopes[2].Data)
 	}
 }
 
@@ -188,7 +202,7 @@ func TestWebhook_RoomFinishedLimpaTudoEPublicaSnapshotsVazios(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
 	}
-	want := []string{"voice.presence.snapshot", EventAwaySnapshot, EventAwayEnded}
+	want := []string{"voice.presence.snapshot", EventSessionSnapshot, EventAwaySnapshot, EventAwayEnded}
 	if got := publisher.types(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("publicado = %v, want %v", got, want)
 	}
@@ -232,5 +246,128 @@ func TestWebhook_LeftMantemLogDeSessaoComEventID(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "voice.session_ended event_id=EV_session") {
 		t.Errorf("log = %q, want voice.session_ended com event_id", buf.String())
+	}
+}
+
+const sessionCreatedMs = 1_700_000_000_123
+
+func sessionEnvelopes(publisher *lockedPublisher) []string {
+	publisher.mu.Lock()
+	defer publisher.mu.Unlock()
+	var payloads []string
+	for _, env := range publisher.envelopes {
+		if env.Type == EventSessionSnapshot {
+			payloads = append(payloads, string(env.Data))
+		}
+	}
+	return payloads
+}
+
+func TestWebhook_JoinedPublicaSessaoEmUTCComMilissegundos(t *testing.T) {
+	handler, publisher := newWebhookFixture(newTestState())
+	roomID := uuid.New()
+	spec := joinedSpec(roomID, uuid.New(), "sid-a", 1_700_000_005)
+	spec.roomCreatedMs = sessionCreatedMs
+
+	serveWebhook(handler, signedWebhookRequest(t, spec))
+
+	want := []string{`{"started_at":"2023-11-14T22:13:20.123Z"}`}
+	if got := sessionEnvelopes(publisher); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("sessão publicada = %v, want %v", got, want)
+	}
+	if topic := publisher.envelopes[1].Topic; topic != realtime.RoomTopic(roomID) {
+		t.Errorf("tópico = %s, want o da sala", topic)
+	}
+}
+
+func TestWebhook_JoinedRepetidoPublicaSessaoIdentica(t *testing.T) {
+	handler, publisher := newWebhookFixture(newTestState())
+	spec := joinedSpec(uuid.New(), uuid.New(), "sid-a", 1_700_000_005)
+	spec.roomCreatedMs = sessionCreatedMs
+
+	serveWebhook(handler, signedWebhookRequest(t, spec))
+	serveWebhook(handler, signedWebhookRequest(t, spec))
+
+	got := sessionEnvelopes(publisher)
+	if len(got) != 2 || got[0] != got[1] {
+		t.Fatalf("sessões publicadas = %v, want duas idênticas", got)
+	}
+}
+
+func TestWebhook_JoinedSemCriacaoDaSalaUsaHorarioDoEventoELoga(t *testing.T) {
+	buf := captureLog(t)
+	handler, publisher := newWebhookFixture(newTestState())
+	spec := joinedSpec(uuid.New(), uuid.New(), "sid-a", 1_700_000_005)
+
+	serveWebhook(handler, signedWebhookRequest(t, spec))
+
+	want := []string{`{"started_at":"2023-11-14T22:13:25.000Z"}`}
+	if got := sessionEnvelopes(publisher); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("sessão publicada = %v, want %v", got, want)
+	}
+	wantLog := "voice.session level=warn cause=missing_room_creation_time event_id=EV_sid-a"
+	if !strings.Contains(buf.String(), wantLog) {
+		t.Errorf("log = %q, want %q", buf.String(), wantLog)
+	}
+}
+
+func TestWebhook_JoinedComSegundosUsaCreationTime(t *testing.T) {
+	handler, publisher := newWebhookFixture(newTestState())
+	spec := joinedSpec(uuid.New(), uuid.New(), "sid-a", 1_700_000_005)
+	spec.roomCreatedSec = 1_700_000_000
+
+	serveWebhook(handler, signedWebhookRequest(t, spec))
+
+	want := []string{`{"started_at":"2023-11-14T22:13:20.000Z"}`}
+	if got := sessionEnvelopes(publisher); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("sessão publicada = %v, want %v", got, want)
+	}
+}
+
+func TestWebhook_LeftDoUltimoAtivoPublicaSessaoNula(t *testing.T) {
+	state := newTestState()
+	handler, publisher := newWebhookFixture(state)
+	roomID, userID := uuid.New(), uuid.New()
+	mustJoin(t, state, roomID, participantOf(userID, "sid-a"), at(0))
+	left := webhookEventSpec{event: "participant_left", eventID: "EV_left", roomID: roomID, userID: userID, sid: "sid-a", createdAt: 1_700_000_100, roomCreatedMs: sessionCreatedMs}
+
+	serveWebhook(handler, signedWebhookRequest(t, left))
+
+	if got := sessionEnvelopes(publisher); len(got) != 1 || got[0] != `{"started_at":null}` {
+		t.Fatalf("sessão publicada = %v, want [null]", got)
+	}
+}
+
+func TestWebhook_LeftComAtivoRestantePublicaSessaoVigente(t *testing.T) {
+	state := newTestState()
+	handler, publisher := newWebhookFixture(state)
+	roomID := uuid.New()
+	leaving, staying := uuid.New(), uuid.New()
+	spec := joinedSpec(roomID, leaving, "sid-a", 1_700_000_005)
+	spec.roomCreatedMs = sessionCreatedMs
+	serveWebhook(handler, signedWebhookRequest(t, spec))
+	other := joinedSpec(roomID, staying, "sid-b", 1_700_000_006)
+	other.roomCreatedMs = sessionCreatedMs
+	serveWebhook(handler, signedWebhookRequest(t, other))
+	publisher.envelopes = nil
+	left := webhookEventSpec{event: "participant_left", eventID: "EV_left", roomID: roomID, userID: leaving, sid: "sid-a", createdAt: 1_700_000_100, roomCreatedMs: sessionCreatedMs}
+
+	serveWebhook(handler, signedWebhookRequest(t, left))
+
+	if got := sessionEnvelopes(publisher); len(got) != 1 || got[0] != `{"started_at":"2023-11-14T22:13:20.123Z"}` {
+		t.Fatalf("sessão publicada = %v, want a vigente", got)
+	}
+}
+
+func TestWebhook_RoomFinishedPublicaSessaoNula(t *testing.T) {
+	state := newTestState()
+	handler, publisher := newWebhookFixture(state)
+	roomID, _ := joinedRoomWithAwayUser(t, state, 1_700_000_000_000)
+	finished := webhookEventSpec{event: "room_finished", eventID: "EV_fin", roomID: roomID, userID: uuid.New(), sid: "x", createdAt: 1_700_000_200}
+
+	serveWebhook(handler, signedWebhookRequest(t, finished))
+
+	if got := sessionEnvelopes(publisher); len(got) != 1 || got[0] != `{"started_at":null}` {
+		t.Fatalf("sessão publicada = %v, want [null]", got)
 	}
 }

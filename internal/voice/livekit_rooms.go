@@ -17,8 +17,13 @@ const (
 )
 
 type RoomLister interface {
-	ListRoomNames(ctx context.Context) ([]string, error)
+	ListRooms(ctx context.Context) ([]LiveKitRoom, error)
 	ListParticipants(ctx context.Context, roomName string) ([]Participant, error)
+}
+
+type LiveKitRoom struct {
+	Name      string
+	CreatedAt time.Time
 }
 
 type LiveKitRoomLister struct {
@@ -51,7 +56,7 @@ func liveKitHTTPBaseURL(liveKitURL string) string {
 	return liveKitURL
 }
 
-func (l *LiveKitRoomLister) ListRoomNames(ctx context.Context) ([]string, error) {
+func (l *LiveKitRoomLister) ListRooms(ctx context.Context) ([]LiveKitRoom, error) {
 	authCtx, err := l.authorize(ctx, &auth.VideoGrant{RoomList: true})
 	if err != nil {
 		return nil, err
@@ -62,11 +67,11 @@ func (l *LiveKitRoomLister) ListRoomNames(ctx context.Context) ([]string, error)
 		return nil, err
 	}
 
-	names := make([]string, 0, len(response.GetRooms()))
+	rooms := make([]LiveKitRoom, 0, len(response.GetRooms()))
 	for _, room := range response.GetRooms() {
-		names = append(names, room.GetName())
+		rooms = append(rooms, LiveKitRoom{Name: room.GetName(), CreatedAt: roomCreationTime(room)})
 	}
-	return names, nil
+	return rooms, nil
 }
 
 func (l *LiveKitRoomLister) ListParticipants(ctx context.Context, roomName string) ([]Participant, error) {
