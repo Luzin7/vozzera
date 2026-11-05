@@ -35,7 +35,11 @@ func ErrHashPassword(err error) error {
 }
 
 func ErrUsernameTaken(err error) error {
-	return httpx.Wrapf(http.StatusConflict, "Erro ao criar usuário ou username/email já em uso", err)
+	return httpx.Wrapf(http.StatusConflict, "Username já está em uso", err)
+}
+
+func ErrCreateUser(err error) error {
+	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao criar usuário", err)
 }
 
 func ErrInvalidCredentials() error {
