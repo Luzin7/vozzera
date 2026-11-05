@@ -4,13 +4,22 @@ on:
   push:
     branches: [ "main" ]
 
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   migrate:
+    needs: [test]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,6 +40,7 @@ jobs:
   build-and-push:
     needs: [migrate]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -62,3 +72,17 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  deploy-render:
+    needs: [migrate, build-and-push]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$RENDER_DEPLOY_HOOK_URL" || { echo "RENDER_DEPLOY_HOOK_URL ausente"; exit 1; }
+          case "$RENDER_DEPLOY_HOOK_URL" in *\?*) ;; *) echo "RENDER_DEPLOY_HOOK_URL sem query string"; exit 1 ;; esac
+          curl -fsS -X POST --max-time 30 "${RENDER_DEPLOY_HOOK_URL}&ref=${GITHUB_SHA}"
