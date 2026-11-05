@@ -280,3 +280,190 @@ func fillSendBuffer(c *Client) {
 		c.send <- []byte("{}")
 	}
 }
+
+type closedConnection struct {
+	client       *Client
+	ctxWasCancel bool
+}
+
+type recordingClosedHook struct {
+	closed chan closedConnection
+}
+
+func newRecordingClosedHook() *recordingClosedHook {
+	return &recordingClosedHook{closed: make(chan closedConnection, 8)}
+}
+
+func (h *recordingClosedHook) HandleConnectionClosed(c *Client) {
+	h.closed <- closedConnection{client: c, ctxWasCancel: c.Context().Err() != nil}
+}
+
+func (h *recordingClosedHook) expectClosed(t *testing.T, want *Client) {
+	t.Helper()
+	select {
+	case got := <-h.closed:
+		if got.client != want {
+			t.Fatalf("hook recebeu outro cliente")
+		}
+		if !got.ctxWasCancel {
+			t.Error("contexto deveria estar cancelado antes do hook")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("hook de conexão encerrada não foi chamado")
+	}
+}
+
+func (h *recordingClosedHook) expectNone(t *testing.T) {
+	t.Helper()
+	select {
+	case <-h.closed:
+		t.Fatal("hook não deveria ter sido chamado")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func newHubWithClosedHook() (*Hub, *recordingClosedHook) {
+	hub := NewHub()
+	hook := newRecordingClosedHook()
+	hub.AddConnectionClosedHook(hook)
+	go hub.Run()
+	return hub, hook
+}
+
+func TestNewClient_ConnIDUnicoPorConexao(t *testing.T) {
+	first := NewClient(nil, nil, uuid.New(), "alice", uuid.New(), nil)
+	second := NewClient(nil, nil, uuid.New(), "alice", uuid.New(), nil)
+
+	if first.ConnID == uuid.Nil || second.ConnID == uuid.Nil {
+		t.Fatal("ConnID não deveria ser nulo")
+	}
+	if first.ConnID == second.ConnID {
+		t.Error("ConnID deveria ser único por conexão")
+	}
+}
+
+func TestHub_ConnectionClosedHookNoUnregister(t *testing.T) {
+	hub, hook := newHubWithClosedHook()
+	ctx := context.Background()
+
+	client := NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil)
+	hub.Register(client)
+	hub.Unregister(client)
+	hub.Sync(ctx)
+
+	hook.expectClosed(t, client)
+}
+
+func TestHub_ConnectionClosedHookNoRevoke(t *testing.T) {
+	hub, hook := newHubWithClosedHook()
+	ctx := context.Background()
+
+	client := NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil)
+	hub.Register(client)
+	hub.Revoke(ctx, client.SessionID)
+	hub.Sync(ctx)
+
+	hook.expectClosed(t, client)
+}
+
+func TestHub_ConnectionClosedHookNoRevokeUser(t *testing.T) {
+	hub, hook := newHubWithClosedHook()
+	ctx := context.Background()
+
+	client := NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil)
+	hub.Register(client)
+	hub.RevokeUser(ctx, client.UserID)
+	hub.Sync(ctx)
+
+	hook.expectClosed(t, client)
+}
+
+func TestHub_ConnectionClosedHookNoClienteLento(t *testing.T) {
+	hub, hook := newHubWithClosedHook()
+	ctx := context.Background()
+
+	client := NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil)
+	topic := Topic("room:" + uuid.New().String())
+	hub.Register(client)
+	hub.Subscribe(client, topic)
+	hub.Sync(ctx)
+
+	fillSendBuffer(client)
+	hub.Publish(ctx, topic, Envelope{V: 1, Type: "test", Topic: topic, TS: time.Now()})
+	hub.Sync(ctx)
+
+	hook.expectClosed(t, client)
+}
+
+func TestHub_ConnectionClosedHookNoShutdown(t *testing.T) {
+	hub, hook := newHubWithClosedHook()
+
+	client := NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil)
+	hub.Register(client)
+	if err := hub.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown erro: %v", err)
+	}
+
+	hook.expectClosed(t, client)
+}
+
+func TestHub_ConnectionClosedHookUmaVezPorCliente(t *testing.T) {
+	hub, hook := newHubWithClosedHook()
+	ctx := context.Background()
+
+	client := NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil)
+	hub.Register(client)
+	hub.Unregister(client)
+	hub.Unregister(client)
+	hub.Sync(ctx)
+
+	hook.expectClosed(t, client)
+	hook.expectNone(t)
+}
+
+func TestHub_ConnectionClosedHookNaoDisparaParaClienteNaoRegistrado(t *testing.T) {
+	hub, hook := newHubWithClosedHook()
+	ctx := context.Background()
+
+	hub.Unregister(NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil))
+	hub.Sync(ctx)
+
+	hook.expectNone(t)
+}
+
+type blockingClosedHook struct {
+	release chan struct{}
+	done    chan struct{}
+}
+
+func (h *blockingClosedHook) HandleConnectionClosed(*Client) {
+	<-h.release
+	close(h.done)
+}
+
+func TestHub_WaitConnectionClosedHooksEsperaOsHooksDoShutdown(t *testing.T) {
+	hub := NewHub()
+	hook := &blockingClosedHook{release: make(chan struct{}), done: make(chan struct{})}
+	hub.AddConnectionClosedHook(hook)
+	go hub.Run()
+	hub.Register(NewClient(hub, nil, uuid.New(), "alice", uuid.New(), nil))
+	if err := hub.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown erro: %v", err)
+	}
+
+	short, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := hub.WaitConnectionClosedHooks(short); err == nil {
+		t.Fatal("deveria esperar o hook em andamento")
+	}
+
+	close(hook.release)
+	if err := hub.WaitConnectionClosedHooks(context.Background()); err != nil {
+		t.Fatalf("WaitConnectionClosedHooks erro: %v", err)
+	}
+	select {
+	case <-hook.done:
+	default:
+		t.Error("hook deveria ter terminado antes de WaitConnectionClosedHooks voltar")
+	}
+}

@@ -58,8 +58,14 @@ Cada domínio é **auto-contido**: handler, service, queries SQL e código gerad
   /voice
     handler.go             # POST /api/voice/token e webhook
     livekit.go             # TokenIssuer — assina JWT do LiveKit (protocol/auth, não o server-sdk)
-    presence.go            # Presença em memória das salas de voz
-    webhook.go             # Webhook do LiveKit Cloud
+    state.go               # Porta VoiceRoomState: presença, ausentes, heartbeat e época
+    state_kv.go            # Implementação de produção (Key Value) com scripts Lua em scripts/
+    state_memory.go        # Implementação só para testes (main.go nunca a referencia)
+    webhook.go             # Webhook do LiveKit Cloud, escreve na porta e responde 503 se o KV falha
+    enter_away.go          # Um arquivo por caso de uso de ausente: enter, leave, release, sweep
+    handler_ws.go          # Comandos WS voice.away.enter / voice.away.leave
+    instance_heartbeat.go  # Batida a cada 10 s; detecta KV zerado e dispara a reidratação
+    hydrate_presence.go    # Reidrata a presença a partir da API do LiveKit
 
   /shared                  # ÚNICO lugar para código compartilhado entre domínios
     /db                    # Conexão base do pgxpool
@@ -71,6 +77,19 @@ Cada domínio é **auto-contido**: handler, service, queries SQL e código gerad
 ```
 
 **Regra:** se `chat` precisa de algo de `auth` (ex: validar token), isso é feito no `main.go` (injeção) ou vai pra `shared/`. Nunca `import "internal/auth"` de dentro de `internal/chat`.
+
+### Key Value e ausente na sala
+
+A presença de voz e os "ausentes" ficam no Key Value (Valkey no Render), atrás da porta `voice.VoiceRoomState`. O resumo de produto, eventos, chaves e falhas está em `docs/ausente.md`.
+
+- **Env vars:** `KEY_VALUE_URL` e `KEY_VALUE_PREFIX` (`^[a-z0-9-]+$`) são obrigatórias; valor ausente ou inválido derruba o processo na subida (`log.Fatalf`). Ambientes que dividem a mesma instância usam prefixos diferentes. As chaves levam o prefixo `vz:<KEY_VALUE_PREFIX>`.
+- **Escrita só por scripts Lua** (`internal/voice/scripts/`, embutidos com `go:embed`), todos idempotentes. Alguns montam chaves em tempo de execução, então o desenho assume um Valkey de um nó só.
+- **Cliente:** `internal/infra/keyvalue` (go-redis v9, timeouts curtos, `MaxRetries` 1, seguro porque toda operação é idempotente). KV inalcançável na subida só gera o log `kv.unreachable_at_startup`; chat e auth não dependem dele.
+- **Instância:** `main.go` cria um `instanceID` por processo. A batida (10 s) renova `instance:<id>` com TTL de 30 s e usa `SET NX` na chave `epoch` para detectar um KV zerado: nesse caso a presença é reidratada pela API do LiveKit (repetida a cada batida até dar certo) e as abas ausentes recebem `voice.away.resync` logo após a detecção, mesmo que a reidratação falhe. O varredor (30 s) remove ausentes de instâncias sem batida.
+- **Conexões:** o go-redis v9.23 abre um pool extra para pipelines (padrão 10), então o cliente fixa `PoolSize` 5, `MaxActiveConns` 5 e `PipelinePoolSize` 2: no máximo 7 conexões por instância e 14 durante a sobreposição de deploy, contra as 50 do plano Free. Um teste com KV real (`TestConnect_UmaInstanciaUsaNoMaximoSeteConexoes`) mede isso.
+- **Fechamento do WS:** `realtime.ConnectionClosedHook` roda depois de o `Hub` limpar os tópicos e cancelar o contexto da conexão; o adaptador de `voice` libera a entrada de ausente dona daquela `ConnID` (3 retentativas, com `recover`). No encerramento, `Hub.WaitConnectionClosedHooks` espera os hooks terminarem antes de o cliente do KV ser fechado.
+- **Testes:** a suíte de contrato `state_contract_test.go` roda na implementação em memória e, com `KV_TEST_URL` definida, também no KV (`docker compose -f docker-compose.dev.yml up -d valkey`). Sem a variável, os testes de KV são pulados localmente e falham no CI (`CI=true`).
+- O Hub continua single-instance: o KV não faz o fan-out de WebSocket entre instâncias.
 
 ### Pontos de atenção com estado compartilhado (Hub)
 
