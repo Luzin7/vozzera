@@ -46,12 +46,13 @@ func (s *HydratePresenceService) Execute(ctx context.Context) error {
 func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTally, error) {
 	var tally hydrationTally
 
-	names, err := s.lister.ListRoomNames(ctx)
+	rooms, err := s.lister.ListRooms(ctx)
 	if err != nil {
 		return tally, err
 	}
 
-	for _, name := range names {
+	for _, room := range rooms {
+		name := room.Name
 		roomID, err := uuid.Parse(name)
 		if err != nil {
 			tally.skippedRooms++
@@ -66,17 +67,22 @@ func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTal
 		}
 
 		participants = withUUIDIdentity(participants)
-		written, err := s.state.HydrateRoom(ctx, roomID, participants)
+		hydrated, err := s.state.HydrateRoom(ctx, RoomHydration{RoomID: roomID, Participants: participants, CreatedAt: room.CreatedAt})
 		if err != nil {
 			return tally, err
 		}
-		if !written {
+		if !hydrated.Written {
 			continue
+		}
+
+		if room.CreatedAt.IsZero() {
+			log.Printf("voice.session level=warn cause=missing_room_creation_time step=hydrate room_id=%s", roomID)
 		}
 
 		tally.rooms++
 		tally.participants += len(participants)
 		s.events.publishPresence(ctx, roomID, realtime.PresenceSnapshot, participants)
+		s.events.publishSession(ctx, roomID, hydrated.SessionStartedAt)
 	}
 	return tally, nil
 }

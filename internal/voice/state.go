@@ -29,20 +29,48 @@ type AwayEntry struct {
 }
 
 type RoomSnapshot struct {
+	Participants     []Participant
+	Away             []AwayEntry
+	SessionStartedAt *time.Time
+}
+
+type JoinInput struct {
+	RoomID        uuid.UUID
+	Participant   Participant
+	At            time.Time
+	RoomCreatedAt time.Time
+}
+
+type LeaveInput struct {
+	RoomID        uuid.UUID
+	SID           string
+	At            time.Time
+	RoomCreatedAt time.Time
+}
+
+type RoomHydration struct {
+	RoomID       uuid.UUID
 	Participants []Participant
-	Away         []AwayEntry
+	CreatedAt    time.Time
+}
+
+type HydrateResult struct {
+	Written          bool
+	SessionStartedAt *time.Time
 }
 
 type JoinResult struct {
-	Participants []Participant
-	ClearedAway  *AwayEntry
+	Participants     []Participant
+	ClearedAway      *AwayEntry
+	SessionStartedAt *time.Time
 }
 
 type LeaveResult struct {
-	Participants []Participant
-	Left         bool
-	Emptied      bool
-	RemovedAway  []AwayEntry
+	Participants     []Participant
+	Left             bool
+	Emptied          bool
+	RemovedAway      []AwayEntry
+	SessionStartedAt *time.Time
 }
 
 type EnterAwayResult struct {
@@ -55,14 +83,14 @@ type BeatResult struct {
 }
 
 type VoiceRoomState interface {
-	Join(ctx context.Context, roomID uuid.UUID, p Participant, at time.Time) (JoinResult, error)
-	Leave(ctx context.Context, roomID uuid.UUID, sid string) (LeaveResult, error)
+	Join(ctx context.Context, in JoinInput) (JoinResult, error)
+	Leave(ctx context.Context, in LeaveInput) (LeaveResult, error)
 	Finish(ctx context.Context, roomID uuid.UUID) ([]AwayEntry, error)
 	Snapshot(ctx context.Context, roomID uuid.UUID) (RoomSnapshot, error)
 	EnterAway(ctx context.Context, entry AwayEntry) (EnterAwayResult, error)
 	LeaveAway(ctx context.Context, userID uuid.UUID) (*AwayEntry, error)
 	ReleaseAway(ctx context.Context, userID uuid.UUID, owner AwayOwner) (*AwayEntry, error)
 	SweepDeadOwners(ctx context.Context) ([]AwayEntry, error)
-	HydrateRoom(ctx context.Context, roomID uuid.UUID, participants []Participant) (bool, error)
+	HydrateRoom(ctx context.Context, in RoomHydration) (HydrateResult, error)
 	Beat(ctx context.Context, instanceID uuid.UUID) (BeatResult, error)
 }

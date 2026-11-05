@@ -65,11 +65,20 @@ func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func logMissingRoomCreationTime(event *livekit.WebhookEvent, roomID uuid.UUID) {
+	if !roomCreationTime(event.GetRoom()).IsZero() {
+		return
+	}
+	log.Printf("voice.session level=warn cause=missing_room_creation_time event_id=%s event=%s room_id=%s", event.GetId(), event.GetEvent(), roomID)
+}
+
 func (h *WebhookHandler) dispatch(ctx context.Context, roomID uuid.UUID, event *livekit.WebhookEvent) error {
 	switch event.Event {
 	case webhook.EventParticipantJoined:
+		logMissingRoomCreationTime(event, roomID)
 		return h.handleJoined(ctx, roomID, event)
 	case webhook.EventParticipantLeft:
+		logMissingRoomCreationTime(event, roomID)
 		return h.handleLeft(ctx, roomID, event)
 	case webhook.EventRoomFinished:
 		return h.handleFinished(ctx, roomID)
@@ -81,12 +90,13 @@ func (h *WebhookHandler) dispatch(ctx context.Context, roomID uuid.UUID, event *
 func (h *WebhookHandler) handleJoined(ctx context.Context, roomID uuid.UUID, event *livekit.WebhookEvent) error {
 	p := participantFromEvent(event.Participant)
 
-	result, err := h.state.Join(ctx, roomID, p, unixMillis(event.GetCreatedAt()))
+	result, err := h.state.Join(ctx, JoinInput{RoomID: roomID, Participant: p, At: unixMillis(event.GetCreatedAt()), RoomCreatedAt: roomCreationTime(event.GetRoom())})
 	if err != nil {
 		return err
 	}
 
 	h.events.publishPresence(ctx, roomID, realtime.PresenceJoined, result.Participants)
+	h.events.publishSession(ctx, roomID, result.SessionStartedAt)
 	if result.ClearedAway == nil {
 		return nil
 	}
@@ -102,12 +112,13 @@ func (h *WebhookHandler) handleLeft(ctx context.Context, roomID uuid.UUID, event
 
 	p := participantFromEvent(event.Participant)
 
-	result, err := h.state.Leave(ctx, roomID, p.SID)
+	result, err := h.state.Leave(ctx, LeaveInput{RoomID: roomID, SID: p.SID, At: unixMillis(event.GetCreatedAt()), RoomCreatedAt: roomCreationTime(event.GetRoom())})
 	if err != nil {
 		return err
 	}
 
 	h.events.publishPresence(ctx, roomID, realtime.PresenceLeft, result.Participants)
+	h.events.publishSession(ctx, roomID, result.SessionStartedAt)
 	if result.Emptied {
 		h.events.publishAwayList(ctx, roomID, nil)
 	}
@@ -122,6 +133,7 @@ func (h *WebhookHandler) handleFinished(ctx context.Context, roomID uuid.UUID) e
 	}
 
 	h.events.publishPresence(ctx, roomID, realtime.PresenceSnapshot, nil)
+	h.events.publishSession(ctx, roomID, nil)
 	h.events.publishAwayList(ctx, roomID, nil)
 	h.announceRemovedAwayEnded(ctx, roomID, removed, "room_finished")
 	return nil
