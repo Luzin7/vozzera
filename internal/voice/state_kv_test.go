@@ -43,6 +43,9 @@ func TestKVVoiceRoomState_Contract(t *testing.T) {
 			expireInstance: func(instanceID uuid.UUID) {
 				client.Del(context.Background(), prefix+":instance:"+instanceID.String())
 			},
+			dropSession: func(roomID uuid.UUID) {
+				client.Del(context.Background(), prefix+":room:"+roomID.String()+":session")
+			},
 		}
 	})
 }

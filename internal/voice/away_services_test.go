@@ -484,18 +484,18 @@ func TestSweepAwayService_ErroDoEstado(t *testing.T) {
 	}
 }
 
-func (s *erroringState) Join(ctx context.Context, roomID uuid.UUID, p Participant, at time.Time) (JoinResult, error) {
+func (s *erroringState) Join(ctx context.Context, in JoinInput) (JoinResult, error) {
 	if s.webhookErr != nil {
 		return JoinResult{}, s.webhookErr
 	}
-	return s.VoiceRoomState.Join(ctx, roomID, p, at)
+	return s.VoiceRoomState.Join(ctx, in)
 }
 
-func (s *erroringState) Leave(ctx context.Context, roomID uuid.UUID, sid string) (LeaveResult, error) {
+func (s *erroringState) Leave(ctx context.Context, in LeaveInput) (LeaveResult, error) {
 	if s.webhookErr != nil {
 		return LeaveResult{}, s.webhookErr
 	}
-	return s.VoiceRoomState.Leave(ctx, roomID, sid)
+	return s.VoiceRoomState.Leave(ctx, in)
 }
 
 func (s *erroringState) Finish(ctx context.Context, roomID uuid.UUID) ([]AwayEntry, error) {

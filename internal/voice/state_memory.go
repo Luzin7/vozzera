@@ -17,6 +17,7 @@ type memoryVoiceRoomState struct {
 	presence   map[uuid.UUID]map[string]Participant
 	away       map[uuid.UUID]map[uuid.UUID]AwayEntry
 	index      map[uuid.UUID]uuid.UUID
+	sessions   map[uuid.UUID]int64
 	heartbeats map[uuid.UUID]time.Time
 	epochSet   bool
 }
@@ -29,6 +30,7 @@ func newMemoryVoiceRoomState(now func() time.Time) *memoryVoiceRoomState {
 		presence:   make(map[uuid.UUID]map[string]Participant),
 		away:       make(map[uuid.UUID]map[uuid.UUID]AwayEntry),
 		index:      make(map[uuid.UUID]uuid.UUID),
+		sessions:   make(map[uuid.UUID]int64),
 		heartbeats: make(map[uuid.UUID]time.Time),
 	}
 }
@@ -59,6 +61,23 @@ func (s *memoryVoiceRoomState) awayEntriesLocked(roomID uuid.UUID) []AwayEntry {
 		return entries[i].UserID.String() < entries[j].UserID.String()
 	})
 	return entries
+}
+
+func (s *memoryVoiceRoomState) openSessionLocked(roomID uuid.UUID, created, fallback time.Time) {
+	millis, origin := sessionOrigin(created, fallback)
+	current, open := s.sessions[roomID]
+	if !open || (origin == sessionOriginExact && current < millis) {
+		s.sessions[roomID] = millis
+	}
+}
+
+func (s *memoryVoiceRoomState) sessionLocked(roomID uuid.UUID) *time.Time {
+	millis, open := s.sessions[roomID]
+	if !open {
+		return nil
+	}
+	started := time.UnixMilli(millis).UTC()
+	return &started
 }
 
 func (s *memoryVoiceRoomState) removeAwayLocked(userID uuid.UUID) *AwayEntry {
@@ -110,16 +129,19 @@ func (s *memoryVoiceRoomState) isAwayLocked(roomID, userID uuid.UUID) bool {
 	return away
 }
 
-func (s *memoryVoiceRoomState) Join(_ context.Context, roomID uuid.UUID, p Participant, at time.Time) (JoinResult, error) {
+func (s *memoryVoiceRoomState) Join(_ context.Context, in JoinInput) (JoinResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	roomID, p, at := in.RoomID, in.Participant, in.At
 
 	if s.presence[roomID] == nil {
 		s.presence[roomID] = make(map[string]Participant)
 	}
 	s.presence[roomID][p.SID] = p
+	s.openSessionLocked(roomID, in.RoomCreatedAt, at)
 
-	return JoinResult{Participants: s.participantsLocked(roomID), ClearedAway: s.clearAwayOnJoinLocked(p.UserID, at)}, nil
+	return JoinResult{Participants: s.participantsLocked(roomID), ClearedAway: s.clearAwayOnJoinLocked(p.UserID, at), SessionStartedAt: s.sessionLocked(roomID)}, nil
 }
 
 func (s *memoryVoiceRoomState) clearAwayOnJoinLocked(rawUserID string, at time.Time) *AwayEntry {
@@ -138,9 +160,11 @@ func (s *memoryVoiceRoomState) clearAwayOnJoinLocked(rawUserID string, at time.T
 	return s.removeAwayLocked(userID)
 }
 
-func (s *memoryVoiceRoomState) Leave(_ context.Context, roomID uuid.UUID, sid string) (LeaveResult, error) {
+func (s *memoryVoiceRoomState) Leave(_ context.Context, in LeaveInput) (LeaveResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	roomID, sid := in.RoomID, in.SID
 
 	_, left := s.presence[roomID][sid]
 	delete(s.presence[roomID], sid)
@@ -152,7 +176,12 @@ func (s *memoryVoiceRoomState) Leave(_ context.Context, roomID uuid.UUID, sid st
 	if s.activeOthersLocked(roomID, uuid.Nil) == 0 {
 		result.Emptied = true
 		result.RemovedAway = s.clearRoomAwayLocked(roomID)
+		delete(s.sessions, roomID)
+		return result, nil
 	}
+
+	s.openSessionLocked(roomID, in.RoomCreatedAt, in.At)
+	result.SessionStartedAt = s.sessionLocked(roomID)
 	return result, nil
 }
 
@@ -161,6 +190,7 @@ func (s *memoryVoiceRoomState) Finish(_ context.Context, roomID uuid.UUID) ([]Aw
 	defer s.mu.Unlock()
 
 	delete(s.presence, roomID)
+	delete(s.sessions, roomID)
 	return s.clearRoomAwayLocked(roomID), nil
 }
 
@@ -168,7 +198,7 @@ func (s *memoryVoiceRoomState) Snapshot(_ context.Context, roomID uuid.UUID) (Ro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return RoomSnapshot{Participants: s.participantsLocked(roomID), Away: s.awayEntriesLocked(roomID)}, nil
+	return RoomSnapshot{Participants: s.participantsLocked(roomID), Away: s.awayEntriesLocked(roomID), SessionStartedAt: s.sessionLocked(roomID)}, nil
 }
 
 func (s *memoryVoiceRoomState) EnterAway(_ context.Context, entry AwayEntry) (EnterAwayResult, error) {
@@ -250,19 +280,24 @@ func (s *memoryVoiceRoomState) instanceAliveLocked(instanceID uuid.UUID) bool {
 	return beating && s.now().Before(expiresAt)
 }
 
-func (s *memoryVoiceRoomState) HydrateRoom(_ context.Context, roomID uuid.UUID, participants []Participant) (bool, error) {
+func (s *memoryVoiceRoomState) HydrateRoom(_ context.Context, in RoomHydration) (HydrateResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(participants) == 0 || len(s.presence[roomID]) > 0 {
-		return false, nil
+	roomID, participants := in.RoomID, in.Participants
+	if len(participants) == 0 {
+		return HydrateResult{}, nil
+	}
+	if len(s.presence[roomID]) > 0 {
+		return HydrateResult{SessionStartedAt: s.sessionLocked(roomID)}, nil
 	}
 
 	s.presence[roomID] = make(map[string]Participant, len(participants))
 	for _, p := range participants {
 		s.presence[roomID][p.SID] = p
 	}
-	return true, nil
+	s.openSessionLocked(roomID, in.CreatedAt, s.now())
+	return HydrateResult{Written: true, SessionStartedAt: s.sessionLocked(roomID)}, nil
 }
 
 func (s *memoryVoiceRoomState) Beat(_ context.Context, instanceID uuid.UUID) (BeatResult, error) {

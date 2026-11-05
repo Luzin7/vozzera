@@ -39,6 +39,7 @@ Servidor para cliente:
 | `voice.away.ended` | `room:<room_id>` | `{"user_id","reason":"room_empty"\|"returned"\|"connection_closed"}` |
 | `voice.away.resync` | `__presence__` | `{}` |
 | `voice.presence.joined`, `left`, `snapshot` | `room:<room_id>` | formato atual, agora lido do KV |
+| `voice.session.snapshot` | `room:<room_id>` | `{"started_at":"<RFC 3339 ms UTC, sufixo Z>"\|null}`, estado completo; `null` quando a sala não tem ativo. Sai em todo `participant_joined` e `participant_left`, no `room_finished`, na reidratação e no snapshot da inscrição (`null` sem participantes). |
 
 Os eventos de ausente vão no tópico da sala porque só inscritos autorizados na sala os recebem. `voice.presence.*` nunca mistura ausentes.
 
@@ -49,6 +50,7 @@ Prefixo `P` = `vz:` + `KEY_VALUE_PREFIX` (em produção, `vz:prod`). Tempos dent
 | Chave | Tipo | Campo e valor | TTL |
 |---|---|---|---|
 | `P:room:{room_id}:presence` | hash | `sid` e JSON com `user_id` e `username` | nenhum (limpa no `room_finished`) |
+| `P:room:{room_id}:session` | string | início da sessão em Unix ms (horário de criação da sala no LiveKit; sem ele, o horário do evento, com log `voice.session level=warn cause=missing_room_creation_time`) | nenhum (apagada quando o último ativo sai e no `room_finished`) |
 | `P:room:{room_id}:away` | hash | `user_id` e JSON com `username`, `since`, `conn_id`, `instance_id` | nenhum |
 | `P:away:index` | hash | `user_id` e `room_id` (no máximo uma entrada de ausente por usuário) | nenhum |
 | `P:instance:{instance_id}` | string | `1` | 30 s, renovada a cada 10 s |

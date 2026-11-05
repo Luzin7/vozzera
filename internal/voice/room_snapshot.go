@@ -42,9 +42,22 @@ func (p *RoomSnapshotProvider) RoomSnapshot(ctx context.Context, roomID uuid.UUI
 		return nil, err
 	}
 
+	sessionData, err := json.Marshal(newSessionSnapshotPayload(sessionStartOf(snapshot)))
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
 	return []realtime.Envelope{
 		{V: 1, Type: realtime.PresenceSnapshot, Topic: topic, TS: now, Data: presenceData},
 		{V: 1, Type: EventAwaySnapshot, Topic: topic, TS: now, Data: awayData},
+		{V: 1, Type: EventSessionSnapshot, Topic: topic, TS: now, Data: sessionData},
 	}, nil
+}
+
+func sessionStartOf(snapshot RoomSnapshot) *time.Time {
+	if len(snapshot.Participants) == 0 {
+		return nil
+	}
+	return snapshot.SessionStartedAt
 }
