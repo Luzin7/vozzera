@@ -45,15 +45,15 @@ func TestParticipantFromEvent(t *testing.T) {
 }
 
 func TestNewWebhookHandler(t *testing.T) {
-	presence := NewVoiceRoomPresence()
+	state := newTestState()
 	publisher := &voiceFakePublisher{}
-	handler := NewWebhookHandler("api-key", "api-secret", presence, publisher)
+	handler := NewWebhookHandler("api-key", "api-secret", state, publisher)
 
 	if handler == nil {
 		t.Fatal("NewWebhookHandler retornou nil")
 	}
-	if handler.presence != presence {
-		t.Error("presence não foi injetado")
+	if handler.state != state {
+		t.Error("state não foi injetado")
 	}
 	if handler.publisher != publisher {
 		t.Error("publisher não foi injetado")
@@ -61,9 +61,9 @@ func TestNewWebhookHandler(t *testing.T) {
 }
 
 func TestWebhookHandler_Handle_EventoDesconhecido(t *testing.T) {
-	presence := NewVoiceRoomPresence()
+	state := newTestState()
 	publisher := &voiceFakePublisher{}
-	handler := NewWebhookHandler("test-key", "test-secret", presence, publisher)
+	handler := NewWebhookHandler("test-key", "test-secret", state, publisher)
 
 	body := map[string]interface{}{
 		"event": "some.random.event",
@@ -86,9 +86,9 @@ func TestWebhookHandler_Handle_EventoDesconhecido(t *testing.T) {
 }
 
 func TestWebhookHandler_Handle_PayloadMalFormado(t *testing.T) {
-	presence := NewVoiceRoomPresence()
+	state := newTestState()
 	publisher := &voiceFakePublisher{}
-	handler := NewWebhookHandler("test-key", "test-secret", presence, publisher)
+	handler := NewWebhookHandler("test-key", "test-secret", state, publisher)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/voice/webhook", strings.NewReader("not-json"))
 	req.Header.Set("Content-Type", "application/json")

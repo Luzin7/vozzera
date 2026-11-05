@@ -2,9 +2,17 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+const (
+	pgUniqueViolationCode = "23505"
+	usernameUniqueKey     = "users_username_key"
+	emailUniqueKey        = "users_email_key"
 )
 
 type RegisterInput struct {
@@ -58,8 +66,23 @@ func (s *RegisterService) Execute(ctx context.Context, in RegisterInput) (Regist
 		PasswordHash: hashedPassword,
 	})
 	if err != nil {
-		return RegisterOutput{}, ErrUsernameTaken(err)
+		return RegisterOutput{}, mapCreateUserError(err)
 	}
 
 	return RegisterOutput{ID: user.ID, Username: user.Username}, nil
+}
+
+func mapCreateUserError(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != pgUniqueViolationCode {
+		return ErrCreateUser(err)
+	}
+
+	switch pgErr.ConstraintName {
+	case usernameUniqueKey:
+		return ErrUsernameTaken(err)
+	case emailUniqueKey:
+		return ErrEmailTaken()
+	}
+	return ErrCreateUser(err)
 }

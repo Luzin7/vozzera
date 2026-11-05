@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -13,18 +14,21 @@ import (
 	"github.com/google/uuid"
 )
 
-const roomAuthorizationTimeout = 3 * time.Second
+const (
+	roomAuthorizationTimeout = 3 * time.Second
+	snapshotTimeout          = 3 * time.Second
+)
 
-type VoicePresenceProvider interface {
-	SnapshotJSON(roomID uuid.UUID) []byte
+type RoomSnapshotProvider interface {
+	RoomSnapshot(ctx context.Context, roomID uuid.UUID) ([]realtime.Envelope, error)
 }
 
 type ChatHandlerDeps struct {
-	Sender     *SendMessageService
-	Registerer realtime.Registerer
-	Publisher  realtime.Publisher
-	Authorizer realtime.SubscriptionAuthorizer
-	Presence   VoicePresenceProvider
+	Sender        *SendMessageService
+	Registerer    realtime.Registerer
+	Publisher     realtime.Publisher
+	Authorizer    realtime.SubscriptionAuthorizer
+	RoomSnapshots []RoomSnapshotProvider
 }
 
 func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
@@ -45,20 +49,7 @@ func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
 		}
 		deps.Registerer.Subscribe(c, topic)
 
-		if deps.Presence != nil {
-			pdata := deps.Presence.SnapshotJSON(cmd.RoomID)
-			if pdata != nil {
-				ctxPub, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				defer cancel()
-				deps.Publisher.Publish(ctxPub, topic, realtime.Envelope{
-					V:     1,
-					Type:  realtime.PresenceSnapshot,
-					Topic: topic,
-					TS:    time.Now(),
-					Data:  pdata,
-				})
-			}
-		}
+		deps.publishRoomSnapshots(cmd.RoomID, topic)
 		return nil
 	})
 
@@ -161,4 +152,26 @@ func (deps ChatHandlerDeps) roomAccess(ctx context.Context, userID uuid.UUID, to
 func isAccessDenied(err error) bool {
 	var httpErr *httpx.Error
 	return errors.As(err, &httpErr) && httpErr.Status < http.StatusInternalServerError
+}
+
+func (deps ChatHandlerDeps) publishRoomSnapshots(roomID uuid.UUID, topic realtime.Topic) {
+	for _, provider := range deps.RoomSnapshots {
+		ctx, cancel := context.WithTimeout(context.Background(), snapshotTimeout)
+		deps.publishRoomSnapshot(ctx, provider, roomID, topic)
+		cancel()
+	}
+}
+
+func (deps ChatHandlerDeps) publishRoomSnapshot(ctx context.Context, provider RoomSnapshotProvider, roomID uuid.UUID, topic realtime.Topic) {
+	envelopes, err := provider.RoomSnapshot(ctx, roomID)
+	if err != nil {
+		log.Printf("chat.room_snapshot level=error room_id=%s err=%q", roomID, err)
+		return
+	}
+
+	for _, env := range envelopes {
+		if err := deps.Publisher.Publish(ctx, topic, env); err != nil {
+			log.Printf("chat.room_snapshot level=error room_id=%s err=%q", roomID, err)
+		}
+	}
 }

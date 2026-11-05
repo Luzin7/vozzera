@@ -365,10 +365,19 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
-          description: Quantidade de mensagens (mais recentes primeiro)
+          description: Quantidade de mensagens por página
+        - name: before
+          in: query
+          required: false
+          schema: { type: string }
+          description: Cursor opaco vindo do header X-Next-Before da página anterior; devolve as mensagens anteriores a ele
       responses:
         "200":
-          description: Mensagens da sala
+          description: Mensagens da sala em ordem cronológica crescente
+          headers:
+            X-Next-Before:
+              description: Cursor para a próxima página (mais antiga). Ausente quando não há mais mensagens
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -376,7 +385,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/Message"
         "400":
-          description: ID de sala inválido
+          description: ID de sala ou cursor before inválido
         "401":
           description: Não autenticado
   /api/rooms/{id}/messages/{content_id}:

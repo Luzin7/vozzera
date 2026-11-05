@@ -13,7 +13,22 @@ SELECT
 FROM messages m
 JOIN users u ON m.user_id = u.id
 WHERE m.room_id = $1 AND m.deleted_at IS NULL
-ORDER BY m.created_at DESC
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $2;
+
+-- name: GetMessagesByRoomBefore :many
+SELECT
+    m.id,
+    m.content,
+    m.created_at,
+    u.id AS user_id,
+    u.username
+FROM messages m
+JOIN users u ON m.user_id = u.id
+WHERE m.room_id = $1
+    AND m.deleted_at IS NULL
+    AND (m.created_at, m.id) < (sqlc.arg(before_created_at)::timestamptz, sqlc.arg(before_id)::uuid)
+ORDER BY m.created_at DESC, m.id DESC
 LIMIT $2;
 
 -- name: UpdateMessage :one

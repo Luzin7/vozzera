@@ -37,12 +37,13 @@ Backend de chat em **texto** e **voz** (real-time com WebSocket e LiveKit Cloud)
 ## Quick start
 
 ```bash
-# 1. Subir o Postgres de dev
-docker compose -f docker-compose.dev.yml up -d
+# 1. Subir o Postgres e o Valkey de dev
+docker compose -f docker-compose.dev.yml up -d postgres valkey
 
 # 2. Configurar env
 cp .env.example .env
 # preencha INVITE_CODE e as credenciais do LiveKit
+# KEY_VALUE_URL=redis://localhost:6379/0 e KEY_VALUE_PREFIX=dev são obrigatórias: sem elas o servidor encerra na subida
 
 # 3. Aplicar migrations e subir o servidor
 make migrate-up

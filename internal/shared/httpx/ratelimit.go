@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"log"
 	"math"
 	"net"
 	"net/http"
@@ -22,10 +23,11 @@ type rateBucket struct {
 }
 
 type RateLimiter struct {
-	mu             sync.Mutex
-	rules          []routeRule
-	buckets        map[string]*rateBucket
-	clientIPHeader string
+	mu                  sync.Mutex
+	nonPublicHeaderOnce sync.Once
+	rules               []routeRule
+	buckets             map[string]*rateBucket
+	clientIPHeader      string
 }
 
 type routeRule struct {
@@ -114,8 +116,12 @@ func (rl *RateLimiter) ruleFor(path string) (RateLimitRule, bool) {
 }
 
 func (rl *RateLimiter) clientIP(r *http.Request) string {
-	if ip := net.ParseIP(strings.TrimSpace(r.Header.Get(rl.clientIPHeader))); ip != nil {
-		return ip.String()
+	headerValue := strings.TrimSpace(r.Header.Get(rl.clientIPHeader))
+	if ip := net.ParseIP(headerValue); ip != nil {
+		if isPublicIP(ip) {
+			return ip.String()
+		}
+		rl.warnNonPublicHeaderOnce(headerValue)
 	}
 
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -123,6 +129,27 @@ func (rl *RateLimiter) clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+func (rl *RateLimiter) warnNonPublicHeaderOnce(value string) {
+	rl.nonPublicHeaderOnce.Do(func() {
+		log.Printf("rate limit: header %q trouxe IP não público %q; usando o RemoteAddr, todos os clientes compartilham o mesmo bucket — verifique a configuração do proxy", rl.clientIPHeader, value)
+	})
+}
+
+var ipv6GlobalUnicast = &net.IPNet{
+	IP:   net.IP{0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	Mask: net.CIDRMask(3, 128),
+}
+
+func isPublicIP(ip net.IP) bool {
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return false
+	}
+	if ip.To4() != nil {
+		return true
+	}
+	return ipv6GlobalUnicast.Contains(ip)
 }
 
 func secondsUntil(deadline time.Time) int {
