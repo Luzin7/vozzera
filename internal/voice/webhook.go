@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -46,6 +47,8 @@ func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logWebhookDropped(log.Default(), event)
+
 	roomID, err := uuid.Parse(event.Room.GetName())
 	if err != nil {
 		w.WriteHeader(http.StatusOK)
@@ -71,6 +74,8 @@ func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case webhook.EventParticipantLeft:
+		logSessionEnded(log.Default(), roomID.String(), event)
+
 		p := participantFromEvent(event.Participant)
 		participants, left := h.presence.Leave(roomID, p.SID)
 		if !left {
