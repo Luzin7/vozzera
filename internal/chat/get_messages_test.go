@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -240,6 +241,59 @@ func TestGetMessagesService_Execute(t *testing.T) {
 		_, err := svc.Execute(context.Background(), GetMessagesInput{RoomID: uuid.New(), Limit: 50, Before: before})
 		if err == nil {
 			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestMessagesPresenter_ReplyTo(t *testing.T) {
+	t.Run("histórico traz snapshot da resposta", func(t *testing.T) {
+		targetID := uuid.New()
+		rows := []GetMessagesByRoomRow{{
+			ID:              uuid.New(),
+			Content:         pgtype.Text{String: "resposta", Valid: true},
+			CreatedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			UserID:          uuid.New(),
+			Username:        "luand",
+			ReplyToID:       pgtype.UUID{Bytes: targetID, Valid: true},
+			ReplyToUsername: pgtype.Text{String: "original", Valid: true},
+			ReplyToContent:  pgtype.Text{String: "mensagem original", Valid: true},
+		}}
+
+		out := MessagesPresenter(rows)
+		if len(out) != 1 {
+			t.Fatalf("len(out) = %d, want 1", len(out))
+		}
+		if out[0].ReplyTo == nil {
+			t.Fatal("ReplyTo = nil, want snapshot")
+		}
+		if out[0].ReplyTo.ID != targetID || out[0].ReplyTo.Username != "original" || out[0].ReplyTo.Content != "mensagem original" {
+			t.Errorf("ReplyTo = %+v, want id %v", out[0].ReplyTo, targetID)
+		}
+	})
+
+	t.Run("sem resposta traz null", func(t *testing.T) {
+		rows := []GetMessagesByRoomRow{{
+			ID:        uuid.New(),
+			Content:   pgtype.Text{String: "sem resposta", Valid: true},
+			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			UserID:    uuid.New(),
+			Username:  "luand",
+		}}
+
+		out := MessagesPresenter(rows)
+		if out[0].ReplyTo != nil {
+			t.Errorf("ReplyTo = %+v, want nil", out[0].ReplyTo)
+		}
+		raw, err := json.Marshal(out[0])
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if string(payload["reply_to"]) != "null" {
+			t.Errorf("reply_to = %s, want null", payload["reply_to"])
 		}
 	})
 }

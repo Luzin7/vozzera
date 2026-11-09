@@ -1,7 +1,16 @@
 -- name: CreateMessage :one
-INSERT INTO messages (room_id, user_id, content)
-VALUES ($1, $2, $3)
+INSERT INTO messages (room_id, user_id, content, reply_to_message_id)
+VALUES ($1, $2, $3, $4)
 RETURNING id, room_id, user_id, content, created_at;
+
+-- name: GetReplyTarget :one
+SELECT
+    m.id,
+    m.content,
+    u.username
+FROM messages m
+JOIN users u ON m.user_id = u.id
+WHERE m.id = $1 AND m.room_id = $2 AND m.deleted_at IS NULL;
 
 -- name: GetMessagesByRoom :many
 SELECT
@@ -9,9 +18,14 @@ SELECT
     m.content,
     m.created_at,
     u.id AS user_id,
-    u.username
+    u.username,
+    r.id AS reply_to_id,
+    ru.username AS reply_to_username,
+    r.content AS reply_to_content
 FROM messages m
 JOIN users u ON m.user_id = u.id
+LEFT JOIN messages r ON m.reply_to_message_id = r.id
+LEFT JOIN users ru ON r.user_id = ru.id
 WHERE m.room_id = $1 AND m.deleted_at IS NULL
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT $2;
@@ -22,9 +36,14 @@ SELECT
     m.content,
     m.created_at,
     u.id AS user_id,
-    u.username
+    u.username,
+    r.id AS reply_to_id,
+    ru.username AS reply_to_username,
+    r.content AS reply_to_content
 FROM messages m
 JOIN users u ON m.user_id = u.id
+LEFT JOIN messages r ON m.reply_to_message_id = r.id
+LEFT JOIN users ru ON r.user_id = ru.id
 WHERE m.room_id = $1
     AND m.deleted_at IS NULL
     AND (m.created_at, m.id) < (sqlc.arg(before_created_at)::timestamptz, sqlc.arg(before_id)::uuid)

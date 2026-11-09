@@ -14,15 +14,16 @@ import (
 )
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (room_id, user_id, content)
-VALUES ($1, $2, $3)
+INSERT INTO messages (room_id, user_id, content, reply_to_message_id)
+VALUES ($1, $2, $3, $4)
 RETURNING id, room_id, user_id, content, created_at
 `
 
 type CreateMessageParams struct {
-	RoomID  uuid.UUID   `json:"room_id"`
-	UserID  uuid.UUID   `json:"user_id"`
-	Content pgtype.Text `json:"content"`
+	RoomID           uuid.UUID   `json:"room_id"`
+	UserID           uuid.UUID   `json:"user_id"`
+	Content          pgtype.Text `json:"content"`
+	ReplyToMessageID pgtype.UUID `json:"reply_to_message_id"`
 }
 
 type CreateMessageRow struct {
@@ -34,7 +35,12 @@ type CreateMessageRow struct {
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
-	row := q.db.QueryRow(ctx, createMessage, arg.RoomID, arg.UserID, arg.Content)
+	row := q.db.QueryRow(ctx, createMessage,
+		arg.RoomID,
+		arg.UserID,
+		arg.Content,
+		arg.ReplyToMessageID,
+	)
 	var i CreateMessageRow
 	err := row.Scan(
 		&i.ID,
@@ -92,9 +98,14 @@ SELECT
     m.content,
     m.created_at,
     u.id AS user_id,
-    u.username
+    u.username,
+    r.id AS reply_to_id,
+    ru.username AS reply_to_username,
+    r.content AS reply_to_content
 FROM messages m
 JOIN users u ON m.user_id = u.id
+LEFT JOIN messages r ON m.reply_to_message_id = r.id
+LEFT JOIN users ru ON r.user_id = ru.id
 WHERE m.room_id = $1 AND m.deleted_at IS NULL
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT $2
@@ -106,11 +117,14 @@ type GetMessagesByRoomParams struct {
 }
 
 type GetMessagesByRoomRow struct {
-	ID        uuid.UUID          `json:"id"`
-	Content   pgtype.Text        `json:"content"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UserID    uuid.UUID          `json:"user_id"`
-	Username  string             `json:"username"`
+	ID              uuid.UUID          `json:"id"`
+	Content         pgtype.Text        `json:"content"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UserID          uuid.UUID          `json:"user_id"`
+	Username        string             `json:"username"`
+	ReplyToID       pgtype.UUID        `json:"reply_to_id"`
+	ReplyToUsername pgtype.Text        `json:"reply_to_username"`
+	ReplyToContent  pgtype.Text        `json:"reply_to_content"`
 }
 
 func (q *Queries) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomParams) ([]GetMessagesByRoomRow, error) {
@@ -128,6 +142,9 @@ func (q *Queries) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomPa
 			&i.CreatedAt,
 			&i.UserID,
 			&i.Username,
+			&i.ReplyToID,
+			&i.ReplyToUsername,
+			&i.ReplyToContent,
 		); err != nil {
 			return nil, err
 		}
@@ -145,9 +162,14 @@ SELECT
     m.content,
     m.created_at,
     u.id AS user_id,
-    u.username
+    u.username,
+    r.id AS reply_to_id,
+    ru.username AS reply_to_username,
+    r.content AS reply_to_content
 FROM messages m
 JOIN users u ON m.user_id = u.id
+LEFT JOIN messages r ON m.reply_to_message_id = r.id
+LEFT JOIN users ru ON r.user_id = ru.id
 WHERE m.room_id = $1
     AND m.deleted_at IS NULL
     AND (m.created_at, m.id) < ($3::timestamptz, $4::uuid)
@@ -163,11 +185,14 @@ type GetMessagesByRoomBeforeParams struct {
 }
 
 type GetMessagesByRoomBeforeRow struct {
-	ID        uuid.UUID          `json:"id"`
-	Content   pgtype.Text        `json:"content"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UserID    uuid.UUID          `json:"user_id"`
-	Username  string             `json:"username"`
+	ID              uuid.UUID          `json:"id"`
+	Content         pgtype.Text        `json:"content"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UserID          uuid.UUID          `json:"user_id"`
+	Username        string             `json:"username"`
+	ReplyToID       pgtype.UUID        `json:"reply_to_id"`
+	ReplyToUsername pgtype.Text        `json:"reply_to_username"`
+	ReplyToContent  pgtype.Text        `json:"reply_to_content"`
 }
 
 func (q *Queries) GetMessagesByRoomBefore(ctx context.Context, arg GetMessagesByRoomBeforeParams) ([]GetMessagesByRoomBeforeRow, error) {
@@ -190,6 +215,9 @@ func (q *Queries) GetMessagesByRoomBefore(ctx context.Context, arg GetMessagesBy
 			&i.CreatedAt,
 			&i.UserID,
 			&i.Username,
+			&i.ReplyToID,
+			&i.ReplyToUsername,
+			&i.ReplyToContent,
 		); err != nil {
 			return nil, err
 		}
@@ -199,6 +227,34 @@ func (q *Queries) GetMessagesByRoomBefore(ctx context.Context, arg GetMessagesBy
 		return nil, err
 	}
 	return items, nil
+}
+
+const getReplyTarget = `-- name: GetReplyTarget :one
+SELECT
+    m.id,
+    m.content,
+    u.username
+FROM messages m
+JOIN users u ON m.user_id = u.id
+WHERE m.id = $1 AND m.room_id = $2 AND m.deleted_at IS NULL
+`
+
+type GetReplyTargetParams struct {
+	ID     uuid.UUID `json:"id"`
+	RoomID uuid.UUID `json:"room_id"`
+}
+
+type GetReplyTargetRow struct {
+	ID       uuid.UUID   `json:"id"`
+	Content  pgtype.Text `json:"content"`
+	Username string      `json:"username"`
+}
+
+func (q *Queries) GetReplyTarget(ctx context.Context, arg GetReplyTargetParams) (GetReplyTargetRow, error) {
+	row := q.db.QueryRow(ctx, getReplyTarget, arg.ID, arg.RoomID)
+	var i GetReplyTargetRow
+	err := row.Scan(&i.ID, &i.Content, &i.Username)
+	return i, err
 }
 
 const updateMessage = `-- name: UpdateMessage :one

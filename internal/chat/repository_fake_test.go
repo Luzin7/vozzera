@@ -11,6 +11,7 @@ type fakeRepo struct {
 	updateMessage     func(context.Context, UpdateMessageParams) (UpdateMessageRow, error)
 	deleteMessage     func(context.Context, DeleteMessageParams) (DeleteMessageRow, error)
 	createMessage     func(context.Context, CreateMessageParams) (CreateMessageRow, error)
+	getReplyTarget    func(context.Context, GetReplyTargetParams) (GetReplyTargetRow, error)
 }
 
 func newFakeRepo() *fakeRepo {
@@ -29,6 +30,9 @@ func newFakeRepo() *fakeRepo {
 		},
 		createMessage: func(context.Context, CreateMessageParams) (CreateMessageRow, error) {
 			return CreateMessageRow{}, errors.New("createMessage não configurado")
+		},
+		getReplyTarget: func(context.Context, GetReplyTargetParams) (GetReplyTargetRow, error) {
+			return GetReplyTargetRow{}, errors.New("getReplyTarget não configurado")
 		},
 	}
 }
@@ -51,6 +55,10 @@ func (f *fakeRepo) DeleteMessage(ctx context.Context, arg DeleteMessageParams) (
 
 func (f *fakeRepo) CreateMessage(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
 	return f.createMessage(ctx, arg)
+}
+
+func (f *fakeRepo) GetReplyTarget(ctx context.Context, arg GetReplyTargetParams) (GetReplyTargetRow, error) {
+	return f.getReplyTarget(ctx, arg)
 }
 
 var _ Repository = (*fakeRepo)(nil)
