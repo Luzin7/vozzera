@@ -6,6 +6,8 @@ import (
 	"github.com/google/uuid"
 )
 
+var pongFrame = []byte(`{"type":"` + EventPong + `"}`)
+
 type MessagePayload struct {
 	ID        uuid.UUID `json:"id"`
 	RoomID    uuid.UUID `json:"room_id"`
