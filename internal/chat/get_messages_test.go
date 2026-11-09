@@ -271,6 +271,34 @@ func TestMessagesPresenter_ReplyTo(t *testing.T) {
 		}
 	})
 
+	t.Run("id nulo com snapshot preenchido vira null", func(t *testing.T) {
+		rows := []GetMessagesByRoomRow{{
+			ID:              uuid.New(),
+			Content:         pgtype.Text{String: "resposta", Valid: true},
+			CreatedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			UserID:          uuid.New(),
+			Username:        "luand",
+			ReplyToUsername: pgtype.Text{String: "original", Valid: true},
+			ReplyToContent:  pgtype.Text{String: "mensagem original", Valid: true},
+		}}
+
+		out := MessagesPresenter(rows)
+		if out[0].ReplyTo != nil {
+			t.Errorf("ReplyTo = %+v, want nil", out[0].ReplyTo)
+		}
+		raw, err := json.Marshal(out[0])
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if string(payload["reply_to"]) != "null" {
+			t.Errorf("reply_to = %s, want null", payload["reply_to"])
+		}
+	})
+
 	t.Run("sem resposta traz null", func(t *testing.T) {
 		rows := []GetMessagesByRoomRow{{
 			ID:        uuid.New(),
