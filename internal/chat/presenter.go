@@ -4,17 +4,47 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type MessageResponse struct {
-	ID        uuid.UUID `json:"id"`
-	Content   string    `json:"content"`
-	CreatedAt string    `json:"created_at"`
-	UserID    uuid.UUID `json:"user_id"`
-	Username  string    `json:"username"`
+	ID        uuid.UUID          `json:"id"`
+	Content   string             `json:"content"`
+	CreatedAt string             `json:"created_at"`
+	UserID    uuid.UUID          `json:"user_id"`
+	Username  string             `json:"username"`
+	ReplyTo   *ReplyToPayload    `json:"reply_to"`
+	Reactions []ReactionResponse `json:"reactions"`
 }
 
-func MessagesPresenter(messages []GetMessagesByRoomRow) []MessageResponse {
+type ReactionResponse struct {
+	Emoji   string      `json:"emoji"`
+	Count   int32       `json:"count"`
+	UserIDs []uuid.UUID `json:"user_ids"`
+}
+
+func ReactionPresenter(reaction ReactionSummary) ReactionResponse {
+	userIDs := reaction.UserIDs
+	if userIDs == nil {
+		userIDs = []uuid.UUID{}
+	}
+
+	return ReactionResponse{
+		Emoji:   reaction.Emoji,
+		Count:   reaction.Count,
+		UserIDs: userIDs,
+	}
+}
+
+func ReactionsPresenter(reactions []ReactionSummary) []ReactionResponse {
+	result := make([]ReactionResponse, 0, len(reactions))
+	for _, reaction := range reactions {
+		result = append(result, ReactionPresenter(reaction))
+	}
+	return result
+}
+
+func MessagesPresenter(messages []GetMessagesByRoomRow, reactions map[uuid.UUID][]ReactionSummary) []MessageResponse {
 	result := make([]MessageResponse, 0, len(messages))
 	for _, m := range messages {
 		result = append(result, MessageResponse{
@@ -23,9 +53,22 @@ func MessagesPresenter(messages []GetMessagesByRoomRow) []MessageResponse {
 			CreatedAt: m.CreatedAt.Time.Format(time.RFC3339),
 			UserID:    m.UserID,
 			Username:  m.Username,
+			ReplyTo:   replyToPresenter(m.ReplyToID, m.ReplyToUsername, m.ReplyToContent),
+			Reactions: ReactionsPresenter(reactions[m.ID]),
 		})
 	}
 	return result
+}
+
+func replyToPresenter(id pgtype.UUID, username, content pgtype.Text) *ReplyToPayload {
+	if !id.Valid {
+		return nil
+	}
+	return &ReplyToPayload{
+		ID:       id.Bytes,
+		Username: username.String,
+		Content:  content.String,
+	}
 }
 
 type UpdateMessageResponse struct {

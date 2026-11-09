@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -240,6 +241,253 @@ func TestGetMessagesService_Execute(t *testing.T) {
 		_, err := svc.Execute(context.Background(), GetMessagesInput{RoomID: uuid.New(), Limit: 50, Before: before})
 		if err == nil {
 			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestMessagesPresenter_ReplyTo(t *testing.T) {
+	t.Run("histórico traz snapshot da resposta", func(t *testing.T) {
+		targetID := uuid.New()
+		rows := []GetMessagesByRoomRow{{
+			ID:              uuid.New(),
+			Content:         pgtype.Text{String: "resposta", Valid: true},
+			CreatedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			UserID:          uuid.New(),
+			Username:        "luand",
+			ReplyToID:       pgtype.UUID{Bytes: targetID, Valid: true},
+			ReplyToUsername: pgtype.Text{String: "original", Valid: true},
+			ReplyToContent:  pgtype.Text{String: "mensagem original", Valid: true},
+		}}
+
+		out := MessagesPresenter(rows, nil)
+		if len(out) != 1 {
+			t.Fatalf("len(out) = %d, want 1", len(out))
+		}
+		if out[0].ReplyTo == nil {
+			t.Fatal("ReplyTo = nil, want snapshot")
+		}
+		if out[0].ReplyTo.ID != targetID || out[0].ReplyTo.Username != "original" || out[0].ReplyTo.Content != "mensagem original" {
+			t.Errorf("ReplyTo = %+v, want id %v", out[0].ReplyTo, targetID)
+		}
+	})
+
+	t.Run("id nulo com snapshot preenchido vira null", func(t *testing.T) {
+		rows := []GetMessagesByRoomRow{{
+			ID:              uuid.New(),
+			Content:         pgtype.Text{String: "resposta", Valid: true},
+			CreatedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			UserID:          uuid.New(),
+			Username:        "luand",
+			ReplyToUsername: pgtype.Text{String: "original", Valid: true},
+			ReplyToContent:  pgtype.Text{String: "mensagem original", Valid: true},
+		}}
+
+		out := MessagesPresenter(rows, nil)
+		if out[0].ReplyTo != nil {
+			t.Errorf("ReplyTo = %+v, want nil", out[0].ReplyTo)
+		}
+		raw, err := json.Marshal(out[0])
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if string(payload["reply_to"]) != "null" {
+			t.Errorf("reply_to = %s, want null", payload["reply_to"])
+		}
+	})
+
+	t.Run("sem resposta traz null", func(t *testing.T) {
+		rows := []GetMessagesByRoomRow{{
+			ID:        uuid.New(),
+			Content:   pgtype.Text{String: "sem resposta", Valid: true},
+			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			UserID:    uuid.New(),
+			Username:  "luand",
+		}}
+
+		out := MessagesPresenter(rows, nil)
+		if out[0].ReplyTo != nil {
+			t.Errorf("ReplyTo = %+v, want nil", out[0].ReplyTo)
+		}
+		raw, err := json.Marshal(out[0])
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if string(payload["reply_to"]) != "null" {
+			t.Errorf("reply_to = %s, want null", payload["reply_to"])
+		}
+	})
+}
+
+type replySnapshotFixture struct {
+	repo    *fakeRepo
+	events  *fakePublisher
+	target  GetReplyTargetRow
+	roomID  uuid.UUID
+	userID  uuid.UUID
+	history func() []MessageResponse
+}
+
+func newReplySnapshotFixture(t *testing.T, original string) *replySnapshotFixture {
+	t.Helper()
+
+	f := &replySnapshotFixture{
+		repo:   newFakeRepo(),
+		events: &fakePublisher{},
+		target: GetReplyTargetRow{
+			ID:       uuid.New(),
+			Content:  pgtype.Text{String: original, Valid: true},
+			Username: "luand",
+		},
+		roomID: uuid.New(),
+		userID: uuid.New(),
+	}
+
+	var rows []GetMessagesByRoomRow
+	f.repo.getReplyTarget = func(ctx context.Context, arg GetReplyTargetParams) (GetReplyTargetRow, error) {
+		return f.target, nil
+	}
+	f.repo.createMessage = func(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
+		createdAt := time.Now()
+		rows = append(rows, GetMessagesByRoomRow{
+			ID:              uuid.New(),
+			Content:         arg.Content,
+			CreatedAt:       pgtype.Timestamptz{Time: createdAt, Valid: true},
+			UserID:          arg.UserID,
+			Username:        "responder",
+			ReplyToID:       arg.ReplyToMessageID,
+			ReplyToUsername: arg.ReplyToUsername,
+			ReplyToContent:  arg.ReplyToContent,
+		})
+		return CreateMessageRow{
+			ID:        rows[len(rows)-1].ID,
+			RoomID:    arg.RoomID,
+			UserID:    arg.UserID,
+			Content:   arg.Content,
+			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+		}, nil
+	}
+	f.repo.updateMessage = func(ctx context.Context, arg UpdateMessageParams) (UpdateMessageRow, error) {
+		f.target.Content = arg.Content
+		return UpdateMessageRow{
+			ID:        arg.ID,
+			RoomID:    arg.RoomID,
+			Content:   arg.Content,
+			UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		}, nil
+	}
+	f.repo.deleteMessage = func(ctx context.Context, arg DeleteMessageParams) (DeleteMessageRow, error) {
+		f.target.Content = pgtype.Text{}
+		return DeleteMessageRow{
+			ID:        arg.ID,
+			RoomID:    arg.RoomID,
+			UserID:    arg.UserID,
+			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		}, nil
+	}
+	f.repo.getMessagesByRoom = func(ctx context.Context, arg GetMessagesByRoomParams) ([]GetMessagesByRoomRow, error) {
+		return rows, nil
+	}
+	f.history = func() []MessageResponse {
+		out, err := NewGetMessagesService(f.repo).Execute(context.Background(), GetMessagesInput{RoomID: f.roomID, Limit: 50})
+		if err != nil {
+			t.Fatalf("GetMessagesService.Execute() erro inesperado: %v", err)
+		}
+		return MessagesPresenter(out.Messages, out.Reactions)
+	}
+	return f
+}
+
+func (f *replySnapshotFixture) sendReply(t *testing.T, content string) MessagePayload {
+	t.Helper()
+
+	if _, err := NewSendMessageService(f.repo, f.events).Execute(context.Background(), SendMessageInput{
+		RoomID:           f.roomID,
+		UserID:           f.userID,
+		Username:         "responder",
+		Content:          content,
+		ReplyToMessageID: &f.target.ID,
+	}); err != nil {
+		t.Fatalf("SendMessageService.Execute() erro inesperado: %v", err)
+	}
+
+	var payload MessagePayload
+	if err := json.Unmarshal(f.events.envelopes[len(f.events.envelopes)-1].Data, &payload); err != nil {
+		t.Fatalf("Unmarshal payload: %v", err)
+	}
+	return payload
+}
+
+func TestReplyToSnapshot(t *testing.T) {
+	t.Run("edição da original não altera a resposta", func(t *testing.T) {
+		f := newReplySnapshotFixture(t, "original")
+		f.sendReply(t, "resposta")
+
+		if _, err := NewUpdateMessageService(f.repo, f.events).Execute(context.Background(), UpdateMessageInput{
+			RoomID:    f.roomID,
+			ContentID: f.target.ID,
+			UserID:    uuid.New(),
+			Content:   "editada",
+		}); err != nil {
+			t.Fatalf("UpdateMessageService.Execute() erro inesperado: %v", err)
+		}
+
+		history := f.history()
+		if len(history) != 1 || history[0].ReplyTo == nil {
+			t.Fatalf("history = %+v, want um reply_to", history)
+		}
+		if history[0].ReplyTo.Content != "original" {
+			t.Errorf("reply_to.content = %q, want %q", history[0].ReplyTo.Content, "original")
+		}
+	})
+
+	t.Run("exclusão da original mantém o snapshot", func(t *testing.T) {
+		f := newReplySnapshotFixture(t, "original")
+		f.sendReply(t, "resposta")
+
+		if _, err := NewDeleteMessageService(f.repo, f.events).Execute(context.Background(), DeleteMessageInput{
+			RoomID:    f.roomID,
+			ContentID: f.target.ID,
+			UserID:    uuid.New(),
+		}); err != nil {
+			t.Fatalf("DeleteMessageService.Execute() erro inesperado: %v", err)
+		}
+
+		history := f.history()
+		if len(history) != 1 || history[0].ReplyTo == nil {
+			t.Fatalf("history = %+v, want um reply_to", history)
+		}
+		if history[0].ReplyTo.Username != "luand" || history[0].ReplyTo.Content != "original" {
+			t.Errorf("reply_to = %+v, want %q/%q", history[0].ReplyTo, "luand", "original")
+		}
+	})
+
+	t.Run("payload WS e histórico têm o mesmo reply_to", func(t *testing.T) {
+		f := newReplySnapshotFixture(t, "original")
+		payload := f.sendReply(t, "resposta")
+
+		history := f.history()
+		if len(history) != 1 || history[0].ReplyTo == nil {
+			t.Fatalf("history = %+v, want um reply_to", history)
+		}
+
+		payloadReply, err := json.Marshal(payload.ReplyTo)
+		if err != nil {
+			t.Fatalf("Marshal payload.ReplyTo: %v", err)
+		}
+		historyReply, err := json.Marshal(history[0].ReplyTo)
+		if err != nil {
+			t.Fatalf("Marshal history.ReplyTo: %v", err)
+		}
+		if string(payloadReply) != string(historyReply) {
+			t.Errorf("reply_to = %s no WS e %s no histórico", payloadReply, historyReply)
 		}
 	})
 }

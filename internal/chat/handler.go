@@ -17,31 +17,42 @@ type UpdateMessageRequest struct {
 	Content string `json:"content"`
 }
 
+type ReactionRequest struct {
+	Emoji string `json:"emoji"`
+}
+
 type ChatDeps struct {
 	Repo       Repository
 	RoomAccess RoomAccess
 	Publisher  realtime.Publisher
+	Transactor Transactor
 	AuthMW     func(http.Handler) http.Handler
 }
 
 type Handler struct {
-	getMessages   *GetMessagesService
-	updateMessage *UpdateMessageService
-	deleteMessage *DeleteMessageService
-	roomAccess    RoomAccess
+	getMessages    *GetMessagesService
+	updateMessage  *UpdateMessageService
+	deleteMessage  *DeleteMessageService
+	addReaction    *AddReactionService
+	removeReaction *RemoveReactionService
+	roomAccess     RoomAccess
 }
 
 func RegisterHandlers(mux *http.ServeMux, deps ChatDeps) {
 	h := &Handler{
-		getMessages:   NewGetMessagesService(deps.Repo),
-		updateMessage: NewUpdateMessageService(deps.Repo, deps.Publisher),
-		deleteMessage: NewDeleteMessageService(deps.Repo, deps.Publisher),
-		roomAccess:    deps.RoomAccess,
+		getMessages:    NewGetMessagesService(deps.Repo),
+		updateMessage:  NewUpdateMessageService(deps.Repo, deps.Publisher),
+		deleteMessage:  NewDeleteMessageService(deps.Repo, deps.Publisher),
+		addReaction:    NewAddReactionService(deps.Repo, deps.Publisher, deps.Transactor),
+		removeReaction: NewRemoveReactionService(deps.Repo, deps.Publisher),
+		roomAccess:     deps.RoomAccess,
 	}
 
 	mux.Handle("GET /api/rooms/{id}/messages", deps.AuthMW(http.HandlerFunc(h.handleGetMessages)))
 	mux.Handle("PATCH /api/rooms/{id}/messages/{content_id}", deps.AuthMW(http.HandlerFunc(h.handleUpdateMessage)))
 	mux.Handle("DELETE /api/rooms/{id}/messages/{content_id}", deps.AuthMW(http.HandlerFunc(h.handleDeleteMessage)))
+	mux.Handle("POST /api/rooms/{id}/messages/{content_id}/reactions", deps.AuthMW(http.HandlerFunc(h.handleAddReaction)))
+	mux.Handle("DELETE /api/rooms/{id}/messages/{content_id}/reactions", deps.AuthMW(http.HandlerFunc(h.handleRemoveReaction)))
 }
 
 func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +93,7 @@ func (h *Handler) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 	if out.NextBefore != "" {
 		w.Header().Set(nextBeforeHeader, out.NextBefore)
 	}
-	httpx.WriteJSON(w, http.StatusOK, MessagesPresenter(out.Messages))
+	httpx.WriteJSON(w, http.StatusOK, MessagesPresenter(out.Messages, out.Reactions))
 }
 
 func (h *Handler) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +178,96 @@ func (h *Handler) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, DeleteMessagePresenter(out.Message))
+}
+
+func (h *Handler) handleAddReaction(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
+	roomID, contentID, claims, ok := reactionRequestContext(w, r)
+	if !ok {
+		return
+	}
+
+	var req ReactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.ensureRoomAccess(r, roomID, claims); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
+	out, err := h.addReaction.Execute(r.Context(), ReactionInput{
+		RoomID:    roomID,
+		MessageID: contentID,
+		UserID:    claims.UserID,
+		Username:  claims.Username,
+		Emoji:     req.Emoji,
+	})
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, ReactionPresenter(out.Reaction))
+}
+
+func (h *Handler) handleRemoveReaction(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
+	roomID, contentID, claims, ok := reactionRequestContext(w, r)
+	if !ok {
+		return
+	}
+
+	var req ReactionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Payload inválido", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.ensureRoomAccess(r, roomID, claims); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
+	out, err := h.removeReaction.Execute(r.Context(), ReactionInput{
+		RoomID:    roomID,
+		MessageID: contentID,
+		UserID:    claims.UserID,
+		Username:  claims.Username,
+		Emoji:     req.Emoji,
+	})
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, ReactionPresenter(out.Reaction))
+}
+
+func reactionRequestContext(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, httpx.UserClaims, bool) {
+	roomID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "ID de sala inválido", http.StatusBadRequest)
+		return uuid.Nil, uuid.Nil, httpx.UserClaims{}, false
+	}
+
+	contentID, err := uuid.Parse(r.PathValue("content_id"))
+	if err != nil {
+		http.Error(w, "ID de conteúdo inválido", http.StatusBadRequest)
+		return uuid.Nil, uuid.Nil, httpx.UserClaims{}, false
+	}
+
+	claims, ok := httpx.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Não autenticado", http.StatusUnauthorized)
+		return uuid.Nil, uuid.Nil, httpx.UserClaims{}, false
+	}
+
+	return roomID, contentID, claims, true
 }
 
 func (h *Handler) ensureRoomAccess(r *http.Request, roomID uuid.UUID, claims httpx.UserClaims) error {

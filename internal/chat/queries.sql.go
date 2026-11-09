@@ -13,16 +13,39 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (room_id, user_id, content)
+const addReaction = `-- name: AddReaction :execrows
+INSERT INTO message_reactions (message_id, user_id, emoji)
 VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type AddReactionParams struct {
+	MessageID uuid.UUID `json:"message_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Emoji     string    `json:"emoji"`
+}
+
+func (q *Queries) AddReaction(ctx context.Context, arg AddReactionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, addReaction, arg.MessageID, arg.UserID, arg.Emoji)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createMessage = `-- name: CreateMessage :one
+INSERT INTO messages (room_id, user_id, content, reply_to_message_id, reply_to_username, reply_to_content)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, room_id, user_id, content, created_at
 `
 
 type CreateMessageParams struct {
-	RoomID  uuid.UUID   `json:"room_id"`
-	UserID  uuid.UUID   `json:"user_id"`
-	Content pgtype.Text `json:"content"`
+	RoomID           uuid.UUID   `json:"room_id"`
+	UserID           uuid.UUID   `json:"user_id"`
+	Content          pgtype.Text `json:"content"`
+	ReplyToMessageID pgtype.UUID `json:"reply_to_message_id"`
+	ReplyToUsername  pgtype.Text `json:"reply_to_username"`
+	ReplyToContent   pgtype.Text `json:"reply_to_content"`
 }
 
 type CreateMessageRow struct {
@@ -34,7 +57,14 @@ type CreateMessageRow struct {
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
-	row := q.db.QueryRow(ctx, createMessage, arg.RoomID, arg.UserID, arg.Content)
+	row := q.db.QueryRow(ctx, createMessage,
+		arg.RoomID,
+		arg.UserID,
+		arg.Content,
+		arg.ReplyToMessageID,
+		arg.ReplyToUsername,
+		arg.ReplyToContent,
+	)
 	var i CreateMessageRow
 	err := row.Scan(
 		&i.ID,
@@ -92,7 +122,10 @@ SELECT
     m.content,
     m.created_at,
     u.id AS user_id,
-    u.username
+    u.username,
+    m.reply_to_message_id AS reply_to_id,
+    m.reply_to_username,
+    m.reply_to_content
 FROM messages m
 JOIN users u ON m.user_id = u.id
 WHERE m.room_id = $1 AND m.deleted_at IS NULL
@@ -106,11 +139,14 @@ type GetMessagesByRoomParams struct {
 }
 
 type GetMessagesByRoomRow struct {
-	ID        uuid.UUID          `json:"id"`
-	Content   pgtype.Text        `json:"content"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UserID    uuid.UUID          `json:"user_id"`
-	Username  string             `json:"username"`
+	ID              uuid.UUID          `json:"id"`
+	Content         pgtype.Text        `json:"content"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UserID          uuid.UUID          `json:"user_id"`
+	Username        string             `json:"username"`
+	ReplyToID       pgtype.UUID        `json:"reply_to_id"`
+	ReplyToUsername pgtype.Text        `json:"reply_to_username"`
+	ReplyToContent  pgtype.Text        `json:"reply_to_content"`
 }
 
 func (q *Queries) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomParams) ([]GetMessagesByRoomRow, error) {
@@ -128,6 +164,9 @@ func (q *Queries) GetMessagesByRoom(ctx context.Context, arg GetMessagesByRoomPa
 			&i.CreatedAt,
 			&i.UserID,
 			&i.Username,
+			&i.ReplyToID,
+			&i.ReplyToUsername,
+			&i.ReplyToContent,
 		); err != nil {
 			return nil, err
 		}
@@ -145,7 +184,10 @@ SELECT
     m.content,
     m.created_at,
     u.id AS user_id,
-    u.username
+    u.username,
+    m.reply_to_message_id AS reply_to_id,
+    m.reply_to_username,
+    m.reply_to_content
 FROM messages m
 JOIN users u ON m.user_id = u.id
 WHERE m.room_id = $1
@@ -163,11 +205,14 @@ type GetMessagesByRoomBeforeParams struct {
 }
 
 type GetMessagesByRoomBeforeRow struct {
-	ID        uuid.UUID          `json:"id"`
-	Content   pgtype.Text        `json:"content"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UserID    uuid.UUID          `json:"user_id"`
-	Username  string             `json:"username"`
+	ID              uuid.UUID          `json:"id"`
+	Content         pgtype.Text        `json:"content"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UserID          uuid.UUID          `json:"user_id"`
+	Username        string             `json:"username"`
+	ReplyToID       pgtype.UUID        `json:"reply_to_id"`
+	ReplyToUsername pgtype.Text        `json:"reply_to_username"`
+	ReplyToContent  pgtype.Text        `json:"reply_to_content"`
 }
 
 func (q *Queries) GetMessagesByRoomBefore(ctx context.Context, arg GetMessagesByRoomBeforeParams) ([]GetMessagesByRoomBeforeRow, error) {
@@ -190,6 +235,9 @@ func (q *Queries) GetMessagesByRoomBefore(ctx context.Context, arg GetMessagesBy
 			&i.CreatedAt,
 			&i.UserID,
 			&i.Username,
+			&i.ReplyToID,
+			&i.ReplyToUsername,
+			&i.ReplyToContent,
 		); err != nil {
 			return nil, err
 		}
@@ -199,6 +247,141 @@ func (q *Queries) GetMessagesByRoomBefore(ctx context.Context, arg GetMessagesBy
 		return nil, err
 	}
 	return items, nil
+}
+
+const getReactionState = `-- name: GetReactionState :one
+SELECT
+    (SELECT COUNT(DISTINCT emoji) FROM message_reactions WHERE message_id = m.id)::int AS distinct_emoji_count,
+    EXISTS (
+        SELECT 1 FROM message_reactions mr
+        WHERE mr.message_id = m.id AND mr.emoji = $1
+    ) AS emoji_exists
+FROM messages m
+WHERE m.id = $2
+    AND m.room_id = $3
+    AND m.deleted_at IS NULL
+`
+
+type GetReactionStateParams struct {
+	ReactionEmoji string    `json:"reaction_emoji"`
+	MessageID     uuid.UUID `json:"message_id"`
+	RoomID        uuid.UUID `json:"room_id"`
+}
+
+type GetReactionStateRow struct {
+	DistinctEmojiCount int32 `json:"distinct_emoji_count"`
+	EmojiExists        bool  `json:"emoji_exists"`
+}
+
+func (q *Queries) GetReactionState(ctx context.Context, arg GetReactionStateParams) (GetReactionStateRow, error) {
+	row := q.db.QueryRow(ctx, getReactionState, arg.ReactionEmoji, arg.MessageID, arg.RoomID)
+	var i GetReactionStateRow
+	err := row.Scan(&i.DistinctEmojiCount, &i.EmojiExists)
+	return i, err
+}
+
+const getReactionsByMessageIDs = `-- name: GetReactionsByMessageIDs :many
+SELECT
+    r.message_id,
+    r.emoji,
+    COUNT(*)::int AS count,
+    array_agg(r.user_id ORDER BY r.created_at, r.user_id)::uuid[] AS user_ids
+FROM message_reactions r
+WHERE r.message_id = ANY($1::uuid[])
+GROUP BY r.message_id, r.emoji
+ORDER BY r.message_id, MIN(r.created_at), r.emoji
+`
+
+type GetReactionsByMessageIDsRow struct {
+	MessageID uuid.UUID   `json:"message_id"`
+	Emoji     string      `json:"emoji"`
+	Count     int32       `json:"count"`
+	UserIds   []uuid.UUID `json:"user_ids"`
+}
+
+func (q *Queries) GetReactionsByMessageIDs(ctx context.Context, messageIds []uuid.UUID) ([]GetReactionsByMessageIDsRow, error) {
+	rows, err := q.db.Query(ctx, getReactionsByMessageIDs, messageIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetReactionsByMessageIDsRow
+	for rows.Next() {
+		var i GetReactionsByMessageIDsRow
+		if err := rows.Scan(
+			&i.MessageID,
+			&i.Emoji,
+			&i.Count,
+			&i.UserIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getReplyTarget = `-- name: GetReplyTarget :one
+SELECT
+    m.id,
+    m.content,
+    u.username
+FROM messages m
+JOIN users u ON m.user_id = u.id
+WHERE m.id = $1 AND m.room_id = $2 AND m.deleted_at IS NULL
+`
+
+type GetReplyTargetParams struct {
+	ID     uuid.UUID `json:"id"`
+	RoomID uuid.UUID `json:"room_id"`
+}
+
+type GetReplyTargetRow struct {
+	ID       uuid.UUID   `json:"id"`
+	Content  pgtype.Text `json:"content"`
+	Username string      `json:"username"`
+}
+
+func (q *Queries) GetReplyTarget(ctx context.Context, arg GetReplyTargetParams) (GetReplyTargetRow, error) {
+	row := q.db.QueryRow(ctx, getReplyTarget, arg.ID, arg.RoomID)
+	var i GetReplyTargetRow
+	err := row.Scan(&i.ID, &i.Content, &i.Username)
+	return i, err
+}
+
+const lockMessage = `-- name: LockMessage :one
+SELECT id FROM messages WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockMessage(ctx context.Context, messageID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockMessage, messageID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const removeReaction = `-- name: RemoveReaction :execrows
+DELETE FROM message_reactions
+WHERE message_id = $1
+    AND user_id = $2
+    AND emoji = $3
+`
+
+type RemoveReactionParams struct {
+	MessageID uuid.UUID `json:"message_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Emoji     string    `json:"emoji"`
+}
+
+func (q *Queries) RemoveReaction(ctx context.Context, arg RemoveReactionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeReaction, arg.MessageID, arg.UserID, arg.Emoji)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateMessage = `-- name: UpdateMessage :one

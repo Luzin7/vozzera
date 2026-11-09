@@ -20,6 +20,7 @@ type GetMessagesInput struct {
 
 type GetMessagesOutput struct {
 	Messages   []GetMessagesByRoomRow
+	Reactions  map[uuid.UUID][]ReactionSummary
 	NextBefore string
 }
 
@@ -65,7 +66,39 @@ func (s *GetMessagesService) Execute(ctx context.Context, in GetMessagesInput) (
 		messages = []GetMessagesByRoomRow{}
 	}
 
-	return GetMessagesOutput{Messages: messages, NextBefore: nextBefore}, nil
+	reactions, err := s.fetchReactions(ctx, messages)
+	if err != nil {
+		return GetMessagesOutput{}, ErrGetMessages(err)
+	}
+
+	return GetMessagesOutput{Messages: messages, Reactions: reactions, NextBefore: nextBefore}, nil
+}
+
+func (s *GetMessagesService) fetchReactions(ctx context.Context, messages []GetMessagesByRoomRow) (map[uuid.UUID][]ReactionSummary, error) {
+	reactions := make(map[uuid.UUID][]ReactionSummary, len(messages))
+	if len(messages) == 0 {
+		return reactions, nil
+	}
+
+	messageIDs := make([]uuid.UUID, 0, len(messages))
+	for _, message := range messages {
+		messageIDs = append(messageIDs, message.ID)
+	}
+
+	rows, err := s.repo.GetReactionsByMessageIDs(ctx, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		reactions[row.MessageID] = append(reactions[row.MessageID], ReactionSummary{
+			Emoji:   row.Emoji,
+			Count:   row.Count,
+			UserIDs: row.UserIds,
+		})
+	}
+
+	return reactions, nil
 }
 
 func (s *GetMessagesService) fetchPage(ctx context.Context, roomID uuid.UUID, before *messageCursor, limit int) ([]GetMessagesByRoomRow, error) {
