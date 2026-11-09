@@ -12,13 +12,16 @@ import (
 )
 
 type Message struct {
-	ID        uuid.UUID          `json:"id"`
-	RoomID    uuid.UUID          `json:"room_id"`
-	UserID    uuid.UUID          `json:"user_id"`
-	Content   pgtype.Text        `json:"content"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	ID               uuid.UUID          `json:"id"`
+	RoomID           uuid.UUID          `json:"room_id"`
+	UserID           uuid.UUID          `json:"user_id"`
+	Content          pgtype.Text        `json:"content"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	ReplyToMessageID pgtype.UUID        `json:"reply_to_message_id"`
+	ReplyToUsername  pgtype.Text        `json:"reply_to_username"`
+	ReplyToContent   pgtype.Text        `json:"reply_to_content"`
 }
 
 type PasswordResetToken struct {
