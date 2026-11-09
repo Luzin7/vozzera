@@ -6,6 +6,7 @@ local function open_session(key, ms, mode)
 end
 
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+redis.call('INCR', KEYS[4])
 open_session(KEYS[3], ARGV[6], ARGV[7])
 
 local cleared_room = ''

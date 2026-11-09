@@ -10,8 +10,10 @@ import (
 )
 
 const (
-	heartbeatInterval = 10 * time.Second
-	sweepInterval     = 30 * time.Second
+	heartbeatInterval         = 10 * time.Second
+	sweepInterval             = 30 * time.Second
+	presenceReconcileInterval = 30 * time.Second
+	hydrationBackoffMax       = 5 * time.Minute
 )
 
 type presenceHydrator interface {
@@ -33,9 +35,11 @@ type InstanceHeartbeat struct {
 	events     *awayEvents
 	interval   time.Duration
 	down       bool
+	now        func() time.Time
 
-	hydrationPending  bool
 	hydrationAttempts int
+	hydrationBackoff  time.Duration
+	nextHydration     time.Time
 }
 
 func NewInstanceHeartbeat(deps InstanceHeartbeatDeps) *InstanceHeartbeat {
@@ -46,6 +50,7 @@ func NewInstanceHeartbeat(deps InstanceHeartbeatDeps) *InstanceHeartbeat {
 		events:     newAwayEvents(deps.State, deps.Publisher),
 		interval:   heartbeatInterval,
 		down:       deps.StartedDown,
+		now:        time.Now,
 	}
 }
 
@@ -79,30 +84,42 @@ func (h *InstanceHeartbeat) tick(ctx context.Context) {
 	h.markUp()
 	if result.Wiped {
 		log.Printf("voice.kv_wiped instance_id=%s", h.instanceID)
-		h.hydrationPending = true
-		h.hydrationAttempts = 0
+		h.scheduleHydrationNow()
 		h.hydrate(ctx)
 		h.events.publishResync(ctx)
 		return
 	}
-	if h.hydrationPending && h.hydrate(ctx) {
+	if h.hydrationDue() && h.hydrate(ctx) {
 		h.events.publishResync(ctx)
 	}
 }
 
+func (h *InstanceHeartbeat) hydrationDue() bool {
+	return h.nextHydration.IsZero() || !h.now().Before(h.nextHydration)
+}
+
+func (h *InstanceHeartbeat) scheduleHydrationNow() {
+	h.hydrationAttempts = 0
+	h.hydrationBackoff = 0
+	h.nextHydration = time.Time{}
+}
+
 func (h *InstanceHeartbeat) hydrate(ctx context.Context) bool {
 	h.hydrationAttempts++
+	now := h.now()
 	if err := h.hydrator.Execute(ctx); err != nil {
-		if h.hydrationAttempts == 1 {
-			log.Printf("voice.hydrate level=error err=%q", err)
-		}
+		h.hydrationBackoff = min(max(h.hydrationBackoff*2, heartbeatInterval), hydrationBackoffMax)
+		h.nextHydration = now.Add(h.hydrationBackoff)
+		log.Printf("voice.hydrate level=error attempts=%d retry_in=%s err=%q", h.hydrationAttempts, h.hydrationBackoff, err)
 		return false
 	}
 
-	h.hydrationPending = false
 	if h.hydrationAttempts > 1 {
 		log.Printf("voice.hydrate recovered attempts=%d", h.hydrationAttempts)
 	}
+	h.hydrationAttempts = 0
+	h.hydrationBackoff = 0
+	h.nextHydration = now.Add(presenceReconcileInterval)
 	return true
 }
 

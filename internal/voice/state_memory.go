@@ -2,6 +2,7 @@ package voice
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ type memoryVoiceRoomState struct {
 	away       map[uuid.UUID]map[uuid.UUID]AwayEntry
 	index      map[uuid.UUID]uuid.UUID
 	sessions   map[uuid.UUID]int64
+	revisions  map[uuid.UUID]int64
 	heartbeats map[uuid.UUID]time.Time
 	epochSet   bool
 }
@@ -31,6 +33,7 @@ func newMemoryVoiceRoomState(now func() time.Time) *memoryVoiceRoomState {
 		away:       make(map[uuid.UUID]map[uuid.UUID]AwayEntry),
 		index:      make(map[uuid.UUID]uuid.UUID),
 		sessions:   make(map[uuid.UUID]int64),
+		revisions:  make(map[uuid.UUID]int64),
 		heartbeats: make(map[uuid.UUID]time.Time),
 	}
 }
@@ -139,6 +142,7 @@ func (s *memoryVoiceRoomState) Join(_ context.Context, in JoinInput) (JoinResult
 		s.presence[roomID] = make(map[string]Participant)
 	}
 	s.presence[roomID][p.SID] = p
+	s.revisions[roomID]++
 	s.openSessionLocked(roomID, in.RoomCreatedAt, at)
 
 	return JoinResult{Participants: s.participantsLocked(roomID), ClearedAway: s.clearAwayOnJoinLocked(p.UserID, at), SessionStartedAt: s.sessionLocked(roomID)}, nil
@@ -166,6 +170,7 @@ func (s *memoryVoiceRoomState) Leave(_ context.Context, in LeaveInput) (LeaveRes
 
 	roomID, sid := in.RoomID, in.SID
 
+	s.revisions[roomID]++
 	_, left := s.presence[roomID][sid]
 	delete(s.presence[roomID], sid)
 	if len(s.presence[roomID]) == 0 {
@@ -189,6 +194,7 @@ func (s *memoryVoiceRoomState) Finish(_ context.Context, roomID uuid.UUID) ([]Aw
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.revisions[roomID]++
 	delete(s.presence, roomID)
 	delete(s.sessions, roomID)
 	return s.clearRoomAwayLocked(roomID), nil
@@ -225,6 +231,7 @@ func (s *memoryVoiceRoomState) EnterAway(_ context.Context, entry AwayEntry) (En
 	}
 	s.away[entry.RoomID][entry.UserID] = entry
 	s.index[entry.UserID] = entry.RoomID
+	s.revisions[entry.RoomID]++
 
 	return EnterAwayResult{Accepted: true, MovedFrom: movedFrom}, nil
 }
@@ -280,24 +287,54 @@ func (s *memoryVoiceRoomState) instanceAliveLocked(instanceID uuid.UUID) bool {
 	return beating && s.now().Before(expiresAt)
 }
 
+func (s *memoryVoiceRoomState) PresenceRevision(_ context.Context, roomID uuid.UUID) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.revisions[roomID], nil
+}
+
 func (s *memoryVoiceRoomState) HydrateRoom(_ context.Context, in RoomHydration) (HydrateResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	roomID, participants := in.RoomID, in.Participants
-	if len(participants) == 0 {
-		return HydrateResult{}, nil
+	if s.revisions[roomID] != in.ExpectedRevision {
+		return HydrateResult{Conflict: true, SessionStartedAt: s.sessionLocked(roomID)}, nil
 	}
-	if len(s.presence[roomID]) > 0 {
+	if len(participants) == 0 && in.PreserveEmpty {
 		return HydrateResult{SessionStartedAt: s.sessionLocked(roomID)}, nil
 	}
-
-	s.presence[roomID] = make(map[string]Participant, len(participants))
-	for _, p := range participants {
-		s.presence[roomID][p.SID] = p
+	hadPresence := len(s.presence[roomID]) > 0
+	changed := s.reconcilePresenceLocked(roomID, participants)
+	if changed {
+		s.revisions[roomID]++
 	}
-	s.openSessionLocked(roomID, in.CreatedAt, s.now())
-	return HydrateResult{Written: true, SessionStartedAt: s.sessionLocked(roomID)}, nil
+	if !hadPresence && len(participants) > 0 {
+		s.openSessionLocked(roomID, in.CreatedAt, s.now())
+	}
+	var removedAway []AwayEntry
+	if len(participants) == 0 {
+		removedAway = s.clearRoomAwayLocked(roomID)
+		delete(s.sessions, roomID)
+	}
+	return HydrateResult{Written: changed, SessionStartedAt: s.sessionLocked(roomID), RemovedAway: removedAway}, nil
+}
+
+func (s *memoryVoiceRoomState) reconcilePresenceLocked(roomID uuid.UUID, participants []Participant) bool {
+	next := make(map[string]Participant, len(participants))
+	for _, p := range participants {
+		next[p.SID] = p
+	}
+	if maps.Equal(s.presence[roomID], next) {
+		return false
+	}
+	if len(next) == 0 {
+		delete(s.presence, roomID)
+		return true
+	}
+	s.presence[roomID] = next
+	return true
 }
 
 func (s *memoryVoiceRoomState) Beat(_ context.Context, instanceID uuid.UUID) (BeatResult, error) {

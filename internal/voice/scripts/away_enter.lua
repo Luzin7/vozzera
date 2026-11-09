@@ -29,5 +29,6 @@ end
 
 redis.call('HSET', KEYS[2], ARGV[1], entry)
 redis.call('HSET', KEYS[3], ARGV[1], ARGV[3])
+redis.call('INCR', KEYS[4])
 
 return {'accepted', moved_from}
