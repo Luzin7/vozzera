@@ -2,7 +2,7 @@
 DB_URL ?= "postgres://admin:admin@localhost:5432/vozzera?sslmode=disable"
 MIGRATIONS_DIR = sql/migrations
 
-.PHONY: generate build run tidy migrate-create migrate-up migrate-down migrate-status
+.PHONY: generate build run tidy migrate-create migrate-up migrate-down migrate-down-to migrate-status
 
 generate:
 	go tool sqlc generate
@@ -27,6 +27,11 @@ migrate-up:
 # Reverter a última migration
 migrate-down:
 	go tool goose -dir $(MIGRATIONS_DIR) postgres $(DB_URL) down
+
+# Reverter até uma versão específica. Uso: make migrate-down-to version=<versao>
+migrate-down-to:
+	test -n "$(version)"
+	go tool goose -dir $(MIGRATIONS_DIR) postgres $(DB_URL) down-to $(version)
 
 # Verificar o estado atual do banco
 migrate-status:

@@ -1,0 +1,66 @@
+name: Migrations Verify
+
+on:
+  pull_request:
+    paths:
+      - "sql/migrations/**"
+  workflow_dispatch:
+
+concurrency:
+  group: migrations-verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  up-down-up:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vozzera
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d vozzera"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/vozzera?sslmode=disable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Goose
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/pressly/goose/master/install.sh | sh -s v3.27.3
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Apply, revert one migration and re-apply
+        run: |
+          set -euo pipefail
+          applied_version() {
+            psql "$DATABASE_URL" -tAc "SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1"
+          }
+
+          goose -dir sql/migrations postgres "$DATABASE_URL" up
+          goose -dir sql/migrations postgres "$DATABASE_URL" status
+
+          before=$(applied_version)
+          test -n "$before"
+          goose -dir sql/migrations postgres "$DATABASE_URL" down
+          after=$(applied_version)
+          test "$after" -lt "$before"
+
+          goose -dir sql/migrations postgres "$DATABASE_URL" up
+          restored=$(applied_version)
+          test "$restored" = "$before"
+
+          echo "up -> down -> up concluído (versão $before)"
