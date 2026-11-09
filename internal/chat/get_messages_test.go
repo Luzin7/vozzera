@@ -259,7 +259,7 @@ func TestMessagesPresenter_ReplyTo(t *testing.T) {
 			ReplyToContent:  pgtype.Text{String: "mensagem original", Valid: true},
 		}}
 
-		out := MessagesPresenter(rows)
+		out := MessagesPresenter(rows, nil)
 		if len(out) != 1 {
 			t.Fatalf("len(out) = %d, want 1", len(out))
 		}
@@ -282,7 +282,7 @@ func TestMessagesPresenter_ReplyTo(t *testing.T) {
 			ReplyToContent:  pgtype.Text{String: "mensagem original", Valid: true},
 		}}
 
-		out := MessagesPresenter(rows)
+		out := MessagesPresenter(rows, nil)
 		if out[0].ReplyTo != nil {
 			t.Errorf("ReplyTo = %+v, want nil", out[0].ReplyTo)
 		}
@@ -308,7 +308,7 @@ func TestMessagesPresenter_ReplyTo(t *testing.T) {
 			Username:  "luand",
 		}}
 
-		out := MessagesPresenter(rows)
+		out := MessagesPresenter(rows, nil)
 		if out[0].ReplyTo != nil {
 			t.Errorf("ReplyTo = %+v, want nil", out[0].ReplyTo)
 		}
@@ -400,7 +400,7 @@ func newReplySnapshotFixture(t *testing.T, original string) *replySnapshotFixtur
 		if err != nil {
 			t.Fatalf("GetMessagesService.Execute() erro inesperado: %v", err)
 		}
-		return MessagesPresenter(out.Messages)
+		return MessagesPresenter(out.Messages, out.Reactions)
 	}
 	return f
 }

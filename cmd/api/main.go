@@ -228,6 +228,7 @@ func main() {
 		Repo:       chatQueries,
 		RoomAccess: room.NewAccess(roomQueries),
 		Publisher:  hub,
+		Transactor: chat.NewPgTransactor(pool),
 		AuthMW:     authMw,
 	})
 

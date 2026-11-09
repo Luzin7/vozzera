@@ -24,6 +24,13 @@ type Message struct {
 	ReplyToContent   pgtype.Text        `json:"reply_to_content"`
 }
 
+type MessageReaction struct {
+	MessageID uuid.UUID `json:"message_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Emoji     string    `json:"emoji"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type PasswordResetToken struct {
 	ID        uuid.UUID `json:"id"`
 	UserID    uuid.UUID `json:"user_id"`

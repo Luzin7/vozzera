@@ -12,9 +12,11 @@ const (
 
 // Eventos emitidos pelo servidor
 const (
-	EventMessageCreated = "message.created"
-	EventMessageUpdated = "message.updated"
-	EventMessageDeleted = "message.deleted"
+	EventMessageCreated  = "message.created"
+	EventMessageUpdated  = "message.updated"
+	EventMessageDeleted  = "message.deleted"
+	EventReactionAdded   = "reaction_added"
+	EventReactionRemoved = "reaction_removed"
 
 	EventSystemError = "system.error"
 	EventPong        = "pong"

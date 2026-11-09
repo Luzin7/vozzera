@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"errors"
+
+	"github.com/google/uuid"
 )
 
 type fakeRepo struct {
@@ -12,6 +14,11 @@ type fakeRepo struct {
 	deleteMessage     func(context.Context, DeleteMessageParams) (DeleteMessageRow, error)
 	createMessage     func(context.Context, CreateMessageParams) (CreateMessageRow, error)
 	getReplyTarget    func(context.Context, GetReplyTargetParams) (GetReplyTargetRow, error)
+	lockMessage       func(context.Context, uuid.UUID) (uuid.UUID, error)
+	getReactionState  func(context.Context, GetReactionStateParams) (GetReactionStateRow, error)
+	addReaction       func(context.Context, AddReactionParams) (int64, error)
+	removeReaction    func(context.Context, RemoveReactionParams) (int64, error)
+	getReactionsByIDs func(context.Context, []uuid.UUID) ([]GetReactionsByMessageIDsRow, error)
 }
 
 func newFakeRepo() *fakeRepo {
@@ -33,6 +40,21 @@ func newFakeRepo() *fakeRepo {
 		},
 		getReplyTarget: func(context.Context, GetReplyTargetParams) (GetReplyTargetRow, error) {
 			return GetReplyTargetRow{}, errors.New("getReplyTarget não configurado")
+		},
+		lockMessage: func(context.Context, uuid.UUID) (uuid.UUID, error) {
+			return uuid.Nil, nil
+		},
+		getReactionState: func(context.Context, GetReactionStateParams) (GetReactionStateRow, error) {
+			return GetReactionStateRow{}, errors.New("getReactionState não configurado")
+		},
+		addReaction: func(context.Context, AddReactionParams) (int64, error) {
+			return 0, errors.New("addReaction não configurado")
+		},
+		removeReaction: func(context.Context, RemoveReactionParams) (int64, error) {
+			return 0, errors.New("removeReaction não configurado")
+		},
+		getReactionsByIDs: func(context.Context, []uuid.UUID) ([]GetReactionsByMessageIDsRow, error) {
+			return nil, nil
 		},
 	}
 }
@@ -61,4 +83,49 @@ func (f *fakeRepo) GetReplyTarget(ctx context.Context, arg GetReplyTargetParams)
 	return f.getReplyTarget(ctx, arg)
 }
 
+func (f *fakeRepo) GetReactionState(ctx context.Context, arg GetReactionStateParams) (GetReactionStateRow, error) {
+	return f.getReactionState(ctx, arg)
+}
+
+func (f *fakeRepo) LockMessage(ctx context.Context, messageID uuid.UUID) (uuid.UUID, error) {
+	return f.lockMessage(ctx, messageID)
+}
+
+func (f *fakeRepo) AddReaction(ctx context.Context, arg AddReactionParams) (int64, error) {
+	return f.addReaction(ctx, arg)
+}
+
+func (f *fakeRepo) RemoveReaction(ctx context.Context, arg RemoveReactionParams) (int64, error) {
+	return f.removeReaction(ctx, arg)
+}
+
+func (f *fakeRepo) GetReactionsByMessageIDs(ctx context.Context, messageIDs []uuid.UUID) ([]GetReactionsByMessageIDsRow, error) {
+	return f.getReactionsByIDs(ctx, messageIDs)
+}
+
 var _ Repository = (*fakeRepo)(nil)
+
+type fakeTransactor struct {
+	repo   Repository
+	began  func(TxLimits)
+	limits TxLimits
+	runs   int
+	inTx   bool
+	err    error
+}
+
+func (f *fakeTransactor) WithinTx(_ context.Context, limits TxLimits, fn func(Repository) error) error {
+	f.runs++
+	f.limits = limits
+	if f.err != nil {
+		return f.err
+	}
+	if f.began != nil {
+		f.began(limits)
+	}
+	f.inTx = true
+	defer func() { f.inTx = false }()
+	return fn(f.repo)
+}
+
+var _ Transactor = (*fakeTransactor)(nil)
