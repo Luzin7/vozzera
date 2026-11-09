@@ -20,6 +20,8 @@ type Message struct {
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
 	ReplyToMessageID pgtype.UUID        `json:"reply_to_message_id"`
+	ReplyToUsername  pgtype.Text        `json:"reply_to_username"`
+	ReplyToContent   pgtype.Text        `json:"reply_to_content"`
 }
 
 type PasswordResetToken struct {

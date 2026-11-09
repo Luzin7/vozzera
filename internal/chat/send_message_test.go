@@ -84,6 +84,9 @@ func TestSendMessageService_Execute_ReplyTo(t *testing.T) {
 			if !arg.ReplyToMessageID.Valid || arg.ReplyToMessageID.Bytes != target.ID {
 				t.Errorf("reply_to_message_id = %v, want %v", arg.ReplyToMessageID, target.ID)
 			}
+			if arg.ReplyToUsername.String != target.Username || arg.ReplyToContent.String != target.Content.String {
+				t.Errorf("snapshot = %q/%q, want %q/%q", arg.ReplyToUsername.String, arg.ReplyToContent.String, target.Username, target.Content.String)
+			}
 			return CreateMessageRow{
 				ID:        uuid.New(),
 				RoomID:    arg.RoomID,

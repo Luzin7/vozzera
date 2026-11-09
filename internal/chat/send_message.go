@@ -52,11 +52,14 @@ func (s *SendMessageService) Execute(ctx context.Context, in SendMessageInput) (
 		return SendMessageOutput{}, err
 	}
 
+	replyToID, replyToUsername, replyToContent := replyToColumns(replyTo)
 	msg, err := s.repo.CreateMessage(ctx, CreateMessageParams{
 		RoomID:           in.RoomID,
 		UserID:           in.UserID,
 		Content:          pgtype.Text{String: content, Valid: true},
-		ReplyToMessageID: replyToParam(in.ReplyToMessageID),
+		ReplyToMessageID: replyToID,
+		ReplyToUsername:  replyToUsername,
+		ReplyToContent:   replyToContent,
 	})
 	if err != nil {
 		return SendMessageOutput{}, ErrCreateMessage(err)
@@ -126,9 +129,11 @@ func (s *SendMessageService) resolveReplyTo(ctx context.Context, in SendMessageI
 	}, nil
 }
 
-func replyToParam(id *uuid.UUID) pgtype.UUID {
-	if id == nil {
-		return pgtype.UUID{}
+func replyToColumns(replyTo *ReplyToPayload) (pgtype.UUID, pgtype.Text, pgtype.Text) {
+	if replyTo == nil {
+		return pgtype.UUID{}, pgtype.Text{}, pgtype.Text{}
 	}
-	return pgtype.UUID{Bytes: *id, Valid: true}
+	return pgtype.UUID{Bytes: replyTo.ID, Valid: true},
+		pgtype.Text{String: replyTo.Username, Valid: true},
+		pgtype.Text{String: replyTo.Content, Valid: true}
 }
