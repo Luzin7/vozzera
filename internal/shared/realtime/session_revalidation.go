@@ -26,6 +26,8 @@ type SessionInvalidError struct {
 	Err error
 }
 
+var ErrMissingSessionRevoker = errors.New("revalidação de sessão exige um revogador")
+
 func (e *SessionInvalidError) Error() string {
 	return e.Err.Error()
 }

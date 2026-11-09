@@ -30,7 +30,11 @@ type Handler struct {
 	upgrader            websocket.Upgrader
 }
 
-func NewHandler(deps HandlerDeps) *Handler {
+func NewHandler(deps HandlerDeps) (*Handler, error) {
+	if deps.SessionRevalidation.Revoker == nil && (deps.SessionRevalidation.Revalidator != nil || deps.SessionRevalidation.Interval > 0) {
+		return nil, realtime.ErrMissingSessionRevoker
+	}
+
 	return &Handler{
 		registerer:          deps.Registerer,
 		router:              deps.Router,
@@ -50,7 +54,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 		},
-	}
+	}, nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

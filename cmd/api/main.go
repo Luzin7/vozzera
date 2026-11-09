@@ -130,7 +130,7 @@ func main() {
 
 	sessionAuth := auth.NewSessionAuthenticator(authQueries, cfg.SessionTouchWindow, cfg.SessionTTL)
 
-	wsHandler := ws.NewHandler(ws.HandlerDeps{
+	wsHandler, err := ws.NewHandler(ws.HandlerDeps{
 		Registerer: hub,
 		Router:     wsRouter,
 		SnapshotProviders: []ws.SnapshotProvider{
@@ -143,6 +143,9 @@ func main() {
 			Interval:    cfg.SessionRevalidateInterval,
 		},
 	})
+	if err != nil {
+		log.Fatalf("Configuração do websocket inválida: %v", err)
+	}
 	var bgWg sync.WaitGroup
 	bgWg.Add(4)
 	go func() {

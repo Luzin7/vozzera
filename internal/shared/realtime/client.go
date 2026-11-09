@@ -157,7 +157,7 @@ func (c *Client) WritePump() {
 }
 
 func (c *Client) sessionRevalidateTicker() (*time.Ticker, <-chan time.Time) {
-	if c.sessionRevalidation.Revalidator == nil || c.sessionRevalidation.Interval <= 0 {
+	if c.sessionRevalidation.Revalidator == nil || c.sessionRevalidation.Revoker == nil || c.sessionRevalidation.Interval <= 0 {
 		return nil, nil
 	}
 
@@ -182,11 +182,6 @@ func (c *Client) sessionValid() bool {
 }
 
 func (c *Client) revokeSession() {
-	if c.sessionRevalidation.Revoker == nil {
-		log.Printf("websocket %s com sessão inválida sem revogador configurado", c.ConnID)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(c.context, sessionRevalidateTimeout)
 	defer cancel()
 
