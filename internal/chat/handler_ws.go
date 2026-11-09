@@ -32,6 +32,8 @@ type ChatHandlerDeps struct {
 }
 
 func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
+	r.Handle(CmdPing, handlePing)
+
 	r.Handle(CmdSubscribe, func(ctx context.Context, c *realtime.Client, data json.RawMessage) error {
 		var cmd struct {
 			RoomID uuid.UUID `json:"room_id"`
@@ -152,6 +154,11 @@ func (deps ChatHandlerDeps) roomAccess(ctx context.Context, userID uuid.UUID, to
 func isAccessDenied(err error) bool {
 	var httpErr *httpx.Error
 	return errors.As(err, &httpErr) && httpErr.Status < http.StatusInternalServerError
+}
+
+func handlePing(_ context.Context, c *realtime.Client, _ json.RawMessage) error {
+	c.Send(pongFrame)
+	return nil
 }
 
 func (deps ChatHandlerDeps) publishRoomSnapshots(roomID uuid.UUID, topic realtime.Topic) {

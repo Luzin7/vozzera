@@ -7,6 +7,7 @@ const (
 	CmdMessage     = "message"
 	CmdTypingStart = "typing.start"
 	CmdTypingStop  = "typing.stop"
+	CmdPing        = "ping"
 )
 
 // Eventos emitidos pelo servidor
@@ -16,4 +17,5 @@ const (
 	EventMessageDeleted = "message.deleted"
 
 	EventSystemError = "system.error"
+	EventPong        = "pong"
 )

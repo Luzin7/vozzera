@@ -88,6 +88,15 @@ func mustSnapshot(t *testing.T, s VoiceRoomState, roomID uuid.UUID) RoomSnapshot
 	return snapshot
 }
 
+func mustPresenceRevision(t *testing.T, s VoiceRoomState, roomID uuid.UUID) int64 {
+	t.Helper()
+	revision, err := s.PresenceRevision(context.Background(), roomID)
+	if err != nil {
+		t.Fatalf("PresenceRevision erro: %v", err)
+	}
+	return revision
+}
+
 func awayUserIDs(snapshot RoomSnapshot) []uuid.UUID {
 	ids := make([]uuid.UUID, 0, len(snapshot.Away))
 	for _, entry := range snapshot.Away {
@@ -474,20 +483,27 @@ func runVoiceRoomStateContract(t *testing.T, newHarness newContractHarness) {
 		assertAwayUsers(t, mustSnapshot(t, s, roomID), liveUser)
 	})
 
-	t.Run("HydrateRoom não sobrescreve sala existente", func(t *testing.T) {
+	t.Run("HydrateRoom reconcilia sala existente com o conjunto do LiveKit", func(t *testing.T) {
 		s := newHarness(t).state
 		roomID := uuid.New()
-		existing := newParticipant()
-		mustJoin(t, s, roomID, existing, at(0))
+		stale := newParticipant()
+		keep := newParticipant()
+		mustJoin(t, s, roomID, stale, at(0))
+		mustJoin(t, s, roomID, keep, at(0))
 
-		result, err := s.HydrateRoom(ctx, RoomHydration{RoomID: roomID, Participants: []Participant{newParticipant()}})
+		result, err := s.HydrateRoom(ctx, RoomHydration{RoomID: roomID, Participants: []Participant{keep, newParticipant()}, ExpectedRevision: mustPresenceRevision(t, s, roomID)})
 
-		if err != nil || result.Written {
-			t.Fatalf("written = %v, err = %v, want false, nil", result.Written, err)
+		if err != nil || !result.Written {
+			t.Fatalf("written = %v, err = %v, want true, nil", result.Written, err)
 		}
 		participants := mustSnapshot(t, s, roomID).Participants
-		if len(participants) != 1 || participants[0].SID != existing.SID {
-			t.Errorf("participants = %+v, want só o existente", participants)
+		if len(participants) != 2 {
+			t.Fatalf("participants = %+v, want dois do LiveKit", participants)
+		}
+		for _, candidate := range participants {
+			if candidate.SID == stale.SID {
+				t.Errorf("participants = %+v, want sem o SID obsoleto", participants)
+			}
 		}
 	})
 
@@ -496,7 +512,7 @@ func runVoiceRoomStateContract(t *testing.T, newHarness newContractHarness) {
 		roomID := uuid.New()
 		hydrated := []Participant{newParticipant(), newParticipant()}
 
-		result, err := s.HydrateRoom(ctx, RoomHydration{RoomID: roomID, Participants: hydrated})
+		result, err := s.HydrateRoom(ctx, RoomHydration{RoomID: roomID, Participants: hydrated, ExpectedRevision: mustPresenceRevision(t, s, roomID)})
 
 		if err != nil || !result.Written {
 			t.Fatalf("written = %v, err = %v, want true, nil", result.Written, err)
@@ -506,10 +522,45 @@ func runVoiceRoomStateContract(t *testing.T, newHarness newContractHarness) {
 		}
 	})
 
-	t.Run("HydrateRoom sem participantes não escreve", func(t *testing.T) {
+	t.Run("HydrateRoom com revisão desatualizada não escreve e sinaliza conflito", func(t *testing.T) {
+		s := newHarness(t).state
+		roomID := uuid.New()
+		first := newParticipant()
+		mustJoin(t, s, roomID, first, at(0))
+		staleRevision := mustPresenceRevision(t, s, roomID)
+		second := newParticipant()
+		mustJoin(t, s, roomID, second, at(0))
+
+		result, err := s.HydrateRoom(ctx, RoomHydration{RoomID: roomID, Participants: []Participant{newParticipant()}, ExpectedRevision: staleRevision})
+
+		if err != nil || !result.Conflict || result.Written {
+			t.Fatalf("result = %+v, err = %v, want conflito sem escrita", result, err)
+		}
+		participants := mustSnapshot(t, s, roomID).Participants
+		if len(participants) != 2 {
+			t.Errorf("participants = %+v, want os dois joins", participants)
+		}
+	})
+
+	t.Run("HydrateRoom sem participantes limpa presença obsoleta", func(t *testing.T) {
+		s := newHarness(t).state
+		roomID := uuid.New()
+		mustJoin(t, s, roomID, newParticipant(), at(0))
+
+		result, err := s.HydrateRoom(ctx, RoomHydration{RoomID: roomID, ExpectedRevision: mustPresenceRevision(t, s, roomID)})
+
+		if err != nil || !result.Written {
+			t.Fatalf("written = %v, err = %v, want true, nil", result.Written, err)
+		}
+		if got := mustSnapshot(t, s, roomID).Participants; len(got) != 0 {
+			t.Errorf("participants = %+v, want vazio", got)
+		}
+	})
+
+	t.Run("HydrateRoom sem participantes em sala vazia não escreve", func(t *testing.T) {
 		s := newHarness(t).state
 
-		result, err := s.HydrateRoom(ctx, RoomHydration{RoomID: uuid.New()})
+		result, err := s.HydrateRoom(ctx, RoomHydration{RoomID: uuid.New(), ExpectedRevision: 0})
 
 		if err != nil || result.Written {
 			t.Fatalf("written = %v, err = %v, want false, nil", result.Written, err)
@@ -579,7 +630,7 @@ func runVoiceRoomStateContract(t *testing.T, newHarness newContractHarness) {
 			},
 			"SweepDeadOwners": func(s VoiceRoomState, _, _, _ uuid.UUID) { s.SweepDeadOwners(ctx) },
 			"HydrateRoom": func(s VoiceRoomState, roomID, _, _ uuid.UUID) {
-				s.HydrateRoom(ctx, RoomHydration{RoomID: roomID, Participants: []Participant{participantOf(uuid.MustParse("00000000-0000-0000-0000-000000000009"), "sid-hydrated")}})
+				s.HydrateRoom(ctx, RoomHydration{RoomID: roomID, Participants: []Participant{participantOf(uuid.MustParse("00000000-0000-0000-0000-000000000009"), "sid-hydrated")}, ExpectedRevision: mustPresenceRevision(t, s, roomID)})
 			},
 			"Beat": func(s VoiceRoomState, _, _, _ uuid.UUID) {
 				s.Beat(ctx, uuid.MustParse("00000000-0000-0000-0000-000000000001"))
@@ -812,7 +863,7 @@ func runCallSessionContract(t *testing.T, newHarness newContractHarness) {
 		s := newHarness(t).state
 		roomID := uuid.New()
 
-		result, err := s.HydrateRoom(context.Background(), RoomHydration{RoomID: roomID, Participants: []Participant{newParticipant()}, CreatedAt: created})
+		result, err := s.HydrateRoom(context.Background(), RoomHydration{RoomID: roomID, Participants: []Participant{newParticipant()}, CreatedAt: created, ExpectedRevision: mustPresenceRevision(t, s, roomID)})
 
 		if err != nil || !result.Written {
 			t.Fatalf("result = %+v, err = %v, want Written", result, err)
@@ -824,9 +875,10 @@ func runCallSessionContract(t *testing.T, newHarness newContractHarness) {
 	t.Run("Sessão: HydrateRoom não mexe em sala existente", func(t *testing.T) {
 		s := newHarness(t).state
 		roomID := uuid.New()
-		joinWithCreation(t, s, roomID, newParticipant(), created, at(0))
+		existing := newParticipant()
+		joinWithCreation(t, s, roomID, existing, created, at(0))
 
-		result, err := s.HydrateRoom(context.Background(), RoomHydration{RoomID: roomID, Participants: []Participant{newParticipant()}, CreatedAt: created.Add(time.Hour)})
+		result, err := s.HydrateRoom(context.Background(), RoomHydration{RoomID: roomID, Participants: []Participant{existing}, CreatedAt: created.Add(time.Hour), ExpectedRevision: mustPresenceRevision(t, s, roomID)})
 
 		if err != nil || result.Written {
 			t.Fatalf("result = %+v, err = %v, want não Written", result, err)
@@ -846,7 +898,7 @@ func runCallSessionContract(t *testing.T, newHarness newContractHarness) {
 		before := joinWithCreation(t, newHarness(t).state, roomID, newParticipant(), created, at(0))
 		fresh := newHarness(t).state
 
-		result, err := fresh.HydrateRoom(context.Background(), RoomHydration{RoomID: roomID, Participants: []Participant{newParticipant()}, CreatedAt: created})
+		result, err := fresh.HydrateRoom(context.Background(), RoomHydration{RoomID: roomID, Participants: []Participant{newParticipant()}, CreatedAt: created, ExpectedRevision: mustPresenceRevision(t, fresh, roomID)})
 
 		if err != nil {
 			t.Fatalf("HydrateRoom erro: %v", err)

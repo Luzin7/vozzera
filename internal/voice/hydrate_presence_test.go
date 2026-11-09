@@ -12,11 +12,12 @@ import (
 )
 
 type fakeRoomLister struct {
-	rooms          []LiveKitRoom
-	participants   map[string][]Participant
-	listRoomsErr   error
-	participantErr map[string]error
-	blockUntilDone bool
+	rooms            []LiveKitRoom
+	participants     map[string][]Participant
+	listRoomsErr     error
+	participantErr   map[string]error
+	blockUntilDone   bool
+	participantBlock bool
 }
 
 func (f *fakeRoomLister) ListRooms(ctx context.Context) ([]LiveKitRoom, error) {
@@ -27,7 +28,11 @@ func (f *fakeRoomLister) ListRooms(ctx context.Context) ([]LiveKitRoom, error) {
 	return f.rooms, f.listRoomsErr
 }
 
-func (f *fakeRoomLister) ListParticipants(_ context.Context, roomName string) ([]Participant, error) {
+func (f *fakeRoomLister) ListParticipants(ctx context.Context, roomName string) ([]Participant, error) {
+	if f.participantBlock {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return f.participants[roomName], f.participantErr[roomName]
 }
 
@@ -59,7 +64,7 @@ func TestHydratePresenceService_PreencheSalasEPublicaSnapshot(t *testing.T) {
 	if got := string(publisher.last().Data); got != `{"started_at":"2023-11-14T22:13:20.123Z"}` {
 		t.Errorf("sessão = %s, want o horário de criação da sala", got)
 	}
-	if !strings.Contains(buf.String(), "voice.hydrate rooms=1 participants=1 skipped_rooms=0 duration_ms=") {
+	if !strings.Contains(buf.String(), "voice.hydrate rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=0 invalid_rooms=0 duration_ms=") {
 		t.Errorf("log = %q, want resumo do voice.hydrate", buf.String())
 	}
 }
@@ -84,16 +89,17 @@ func TestHydratePresenceService_IgnoraSalasENomesQueNaoSaoUUID(t *testing.T) {
 	if got := mustSnapshot(t, state, roomID).Participants; len(got) != 1 || got[0].SID != "sid-a" {
 		t.Errorf("participantes = %+v, want só identidades UUID", got)
 	}
-	if !strings.Contains(buf.String(), "rooms=1 participants=1 skipped_rooms=1") {
-		t.Errorf("log = %q, want skipped_rooms=1", buf.String())
+	if !strings.Contains(buf.String(), "rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=0 invalid_rooms=1") {
+		t.Errorf("log = %q, want invalid_rooms=1", buf.String())
 	}
 }
 
-func TestHydratePresenceService_NaoSobrescreveSalaExistente(t *testing.T) {
+func TestHydratePresenceService_ReconciliaSalaExistente(t *testing.T) {
 	state := newTestState()
 	publisher := &lockedPublisher{}
 	roomID := uuid.New()
-	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-webhook"), at(0))
+	stale := participantOf(uuid.New(), "sid-webhook")
+	mustJoin(t, state, roomID, stale, at(0))
 	lister := &fakeRoomLister{
 		rooms:        []LiveKitRoom{{Name: roomID.String()}},
 		participants: map[string][]Participant{roomID.String(): {participantOf(uuid.New(), "sid-hydrated")}},
@@ -101,8 +107,9 @@ func TestHydratePresenceService_NaoSobrescreveSalaExistente(t *testing.T) {
 
 	newHydrateService(lister, state, publisher).Execute(context.Background())
 
-	if got := mustSnapshot(t, state, roomID).Participants; len(got) != 1 || got[0].SID != "sid-webhook" {
-		t.Errorf("participantes = %+v, want só o do webhook", got)
+	participants := mustSnapshot(t, state, roomID).Participants
+	if len(participants) != 1 || participants[0].SID != "sid-hydrated" {
+		t.Errorf("participantes = %+v, want só o do LiveKit", participants)
 	}
 }
 
@@ -120,7 +127,7 @@ func TestHydratePresenceService_FalhaDoLiveKitDevolveErroENaoPublica(t *testing.
 	}
 }
 
-func TestHydratePresenceService_FalhaEmUmaSalaContaComoPuladaEContinua(t *testing.T) {
+func TestHydratePresenceService_FalhaEmUmaSalaContaComoFalhaEContinua(t *testing.T) {
 	state := newTestState()
 	publisher := &lockedPublisher{}
 	broken, healthy := uuid.New(), uuid.New()
@@ -133,14 +140,17 @@ func TestHydratePresenceService_FalhaEmUmaSalaContaComoPuladaEContinua(t *testin
 
 	err := newHydrateService(lister, state, publisher).Execute(context.Background())
 
-	if err != nil {
-		t.Fatalf("Execute erro: %v", err)
+	if err == nil {
+		t.Fatal("Execute deveria devolver o erro da sala")
 	}
 	if len(mustSnapshot(t, state, healthy).Participants) != 1 {
 		t.Error("sala saudável deveria ter sido hidratada")
 	}
-	if !strings.Contains(buf.String(), "rooms=1 participants=1 skipped_rooms=1") {
-		t.Errorf("log = %q, want skipped_rooms=1", buf.String())
+	if !strings.Contains(buf.String(), "rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=1 invalid_rooms=0") {
+		t.Errorf("log = %q, want failed=1", buf.String())
+	}
+	if !strings.Contains(buf.String(), "voice.hydrate level=error room_id="+broken.String()) {
+		t.Errorf("log = %q, want a sala com falha", buf.String())
 	}
 }
 
@@ -173,5 +183,24 @@ func TestHydratePresenceService_SalaSemCriacaoLogaAviso(t *testing.T) {
 	want := "voice.session level=warn cause=missing_room_creation_time step=hydrate room_id=" + roomID.String()
 	if !strings.Contains(buf.String(), want) {
 		t.Errorf("log = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestHydratePresenceService_ContaSalasPuladasPeloOrcamento(t *testing.T) {
+	first, second := uuid.New(), uuid.New()
+	lister := &fakeRoomLister{
+		rooms:            []LiveKitRoom{{Name: first.String()}, {Name: second.String()}},
+		participantBlock: true,
+	}
+	service := newHydrateService(lister, newTestState(), &lockedPublisher{})
+	service.timeout = 20 * time.Millisecond
+	buf := captureLog(t)
+
+	if err := service.Execute(context.Background()); err != nil {
+		t.Fatalf("Execute erro: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "rooms=0 participants=0 empty_pending=0 skipped_budget=2 failed=0") {
+		t.Errorf("log = %q, want skipped_budget=2", buf.String())
 	}
 }

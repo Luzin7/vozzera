@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +23,8 @@ const (
 )
 
 var errUnexpectedScriptReply = errors.New("resposta inesperada do script do key value")
+
+var errPresenceRevisionInvalid = errors.New("revisão de presença inválida")
 
 type kvScripts struct {
 	presenceJoin  *redis.Script
@@ -83,6 +86,10 @@ func (s *kvVoiceRoomState) presenceKey(roomID uuid.UUID) string {
 	return s.prefix + ":room:" + roomID.String() + ":presence"
 }
 
+func (s *kvVoiceRoomState) revisionKey(roomID uuid.UUID) string {
+	return s.prefix + ":room:" + roomID.String() + ":presence:rev"
+}
+
 func (s *kvVoiceRoomState) sessionKey(roomID uuid.UUID) string {
 	return s.prefix + ":room:" + roomID.String() + ":session"
 }
@@ -119,7 +126,7 @@ func (s *kvVoiceRoomState) Join(ctx context.Context, in JoinInput) (JoinResult, 
 
 	sessionMillis, origin := sessionOrigin(in.RoomCreatedAt, at)
 	reply, err := s.run(ctx, s.scripts.presenceJoin,
-		[]string{s.presenceKey(roomID), s.indexKey(), s.sessionKey(roomID)},
+		[]string{s.presenceKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID)},
 		p.SID, string(value), p.UserID, at.UnixMilli(), s.prefix, sessionMillis, origin)
 	if err != nil {
 		return JoinResult{}, err
@@ -147,7 +154,7 @@ func (s *kvVoiceRoomState) Leave(ctx context.Context, in LeaveInput) (LeaveResul
 	roomID, sid := in.RoomID, in.SID
 	sessionMillis, origin := sessionOrigin(in.RoomCreatedAt, in.At)
 	reply, err := s.run(ctx, s.scripts.presenceLeave,
-		[]string{s.presenceKey(roomID), s.awayKey(roomID), s.indexKey(), s.sessionKey(roomID)},
+		[]string{s.presenceKey(roomID), s.awayKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID)},
 		sid, roomID.String(), sessionMillis, origin)
 	if err != nil {
 		return LeaveResult{}, err
@@ -178,7 +185,7 @@ func (s *kvVoiceRoomState) Leave(ctx context.Context, in LeaveInput) (LeaveResul
 
 func (s *kvVoiceRoomState) Finish(ctx context.Context, roomID uuid.UUID) ([]AwayEntry, error) {
 	reply, err := s.run(ctx, s.scripts.roomFinished,
-		[]string{s.presenceKey(roomID), s.awayKey(roomID), s.indexKey(), s.sessionKey(roomID)},
+		[]string{s.presenceKey(roomID), s.awayKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID)},
 		roomID.String())
 	if err != nil {
 		return nil, err
@@ -225,7 +232,7 @@ func (s *kvVoiceRoomState) EnterAway(ctx context.Context, entry AwayEntry) (Ente
 	}
 
 	reply, err := s.run(ctx, s.scripts.awayEnter,
-		[]string{s.presenceKey(entry.RoomID), s.awayKey(entry.RoomID), s.indexKey()},
+		[]string{s.presenceKey(entry.RoomID), s.awayKey(entry.RoomID), s.indexKey(), s.revisionKey(entry.RoomID)},
 		entry.UserID.String(), string(value), entry.RoomID.String(), s.prefix)
 	if err != nil {
 		return EnterAwayResult{}, err
@@ -280,14 +287,32 @@ func (s *kvVoiceRoomState) SweepDeadOwners(ctx context.Context) ([]AwayEntry, er
 	return entries, nil
 }
 
-func (s *kvVoiceRoomState) HydrateRoom(ctx context.Context, in RoomHydration) (HydrateResult, error) {
-	if len(in.Participants) == 0 {
-		return HydrateResult{}, nil
-	}
+func (s *kvVoiceRoomState) PresenceRevision(ctx context.Context, roomID uuid.UUID) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, kvOperationTimeout)
+	defer cancel()
 
+	value, err := s.client.Get(ctx, s.revisionKey(roomID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	revision, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, errPresenceRevisionInvalid
+	}
+	return revision, nil
+}
+
+func (s *kvVoiceRoomState) HydrateRoom(ctx context.Context, in RoomHydration) (HydrateResult, error) {
 	sessionMillis, origin := sessionOrigin(in.CreatedAt, time.Now())
-	args := make([]any, 0, len(in.Participants)*2+2)
-	args = append(args, sessionMillis, origin)
+	preserveEmpty := 0
+	if in.PreserveEmpty {
+		preserveEmpty = 1
+	}
+	args := make([]any, 0, len(in.Participants)*2+5)
+	args = append(args, sessionMillis, origin, in.ExpectedRevision, preserveEmpty, in.RoomID.String())
 	for _, p := range in.Participants {
 		value, err := json.Marshal(kvParticipant{UserID: p.UserID, Username: p.Username})
 		if err != nil {
@@ -296,18 +321,29 @@ func (s *kvVoiceRoomState) HydrateRoom(ctx context.Context, in RoomHydration) (H
 		args = append(args, p.SID, string(value))
 	}
 
-	reply, err := s.run(ctx, s.scripts.hydrateRoom, []string{s.presenceKey(in.RoomID), s.sessionKey(in.RoomID)}, args...)
+	keys := []string{
+		s.presenceKey(in.RoomID),
+		s.sessionKey(in.RoomID),
+		s.revisionKey(in.RoomID),
+		s.awayKey(in.RoomID),
+		s.indexKey(),
+	}
+	reply, err := s.run(ctx, s.scripts.hydrateRoom, keys, args...)
 	if err != nil {
 		return HydrateResult{}, err
 	}
-	return hydrateResultFrom(reply)
+	return hydrateResultFrom(reply, in.RoomID)
 }
 
-func hydrateResultFrom(reply []any) (HydrateResult, error) {
-	if len(reply) != 2 {
+func hydrateResultFrom(reply []any, roomID uuid.UUID) (HydrateResult, error) {
+	if len(reply) != 4 {
 		return HydrateResult{}, errUnexpectedScriptReply
 	}
 	written, ok := reply[0].(int64)
+	if !ok {
+		return HydrateResult{}, errUnexpectedScriptReply
+	}
+	conflict, ok := reply[2].(int64)
 	if !ok {
 		return HydrateResult{}, errUnexpectedScriptReply
 	}
@@ -315,7 +351,11 @@ func hydrateResultFrom(reply []any) (HydrateResult, error) {
 	if err != nil {
 		return HydrateResult{}, err
 	}
-	return HydrateResult{Written: written == 1, SessionStartedAt: startedAt}, nil
+	removedAway, err := awayEntriesInRoomFromFlat(roomID, reply[3])
+	if err != nil {
+		return HydrateResult{}, err
+	}
+	return HydrateResult{Written: written == 1, Conflict: conflict == 1, SessionStartedAt: startedAt, RemovedAway: removedAway}, nil
 }
 
 func (s *kvVoiceRoomState) Beat(ctx context.Context, instanceID uuid.UUID) (BeatResult, error) {

@@ -61,9 +61,25 @@ func TestHandler_ServerShutdownClosesSocketWithGoingAway(t *testing.T) {
 	assertCloseCode(t, conn, websocket.CloseGoingAway)
 }
 
+type subscribeBarrier chan struct{}
+
+func (b subscribeBarrier) OnConnect(*realtime.Client) []realtime.Envelope {
+	close(b)
+	return nil
+}
+
 func connectedSocket(t *testing.T, hub *realtime.Hub, sessionID uuid.UUID) *websocket.Conn {
 	t.Helper()
-	handler := NewHandler(HandlerDeps{Registerer: hub, Router: NewRouter(), AllowedOrigins: []string{testOrigin}})
+	subscribed := make(chan struct{})
+	handler, err := NewHandler(HandlerDeps{
+		Registerer:        hub,
+		Router:            NewRouter(),
+		SnapshotProviders: []SnapshotProvider{subscribeBarrier(subscribed)},
+		AllowedOrigins:    []string{testOrigin},
+	})
+	if err != nil {
+		t.Fatalf("NewHandler erro: %v", err)
+	}
 	authenticated := httpx.Auth(func(context.Context, string) (httpx.UserClaims, error) {
 		return httpx.UserClaims{UserID: uuid.New(), Username: "alice", Role: httpx.RoleUser, SessionID: sessionID}, nil
 	})
@@ -79,22 +95,13 @@ func connectedSocket(t *testing.T, hub *realtime.Hub, sessionID uuid.UUID) *webs
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	waitUntilSubscribed(t, hub, conn)
-	return conn
-}
-
-func waitUntilSubscribed(t *testing.T, hub *realtime.Hub, conn *websocket.Conn) {
-	t.Helper()
-	ping := realtime.Envelope{V: 1, Type: "test.ping", Topic: realtime.GlobalPresenceTopic, TS: time.Now()}
-	for range 50 {
-		hub.Publish(context.Background(), realtime.GlobalPresenceTopic, ping)
-		conn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
-		if _, _, err := conn.ReadMessage(); err == nil {
-			conn.SetReadDeadline(time.Time{})
-			return
-		}
+	select {
+	case <-subscribed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("socket não foi registrado no hub")
 	}
-	t.Fatal("socket não foi registrado no hub")
+
+	return conn
 }
 
 func assertCloseCode(t *testing.T, conn *websocket.Conn, want int) {
