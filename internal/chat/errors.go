@@ -13,6 +13,7 @@ var (
 	ErrEmptyContent        = httpx.Errorf(http.StatusBadRequest, "O conteúdo não pode ser vazio")
 	ErrContentTooLong      = httpx.Errorf(http.StatusBadRequest, "O conteúdo deve ter no máximo 4000 caracteres")
 	ErrInvalidCursor       = httpx.Errorf(http.StatusBadRequest, "Cursor de paginação inválido")
+	ErrInvalidReplyTarget  = httpx.Errorf(http.StatusBadRequest, "Mensagem de resposta inválida")
 	ErrRoomNotFound        = httpx.Errorf(http.StatusNotFound, "Sala não encontrada")
 	ErrMessageNotEditable  = httpx.Errorf(http.StatusForbidden, "Mensagem não encontrada ou você não tem permissão para editá-la")
 	ErrMessageNotDeletable = httpx.Errorf(http.StatusForbidden, "Mensagem não encontrada ou você não tem permissão para deletá-la")
@@ -66,6 +67,10 @@ func ErrAddReaction(err error) error {
 
 func ErrRemoveReaction(err error) error {
 	return httpx.Wrapf(http.StatusInternalServerError, "Erro interno ao remover reação", err)
+}
+
+func ErrGetReplyTarget(err error) error {
+	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao validar mensagem de resposta", err)
 }
 
 func ErrAuthorizeRoom(err error) error {

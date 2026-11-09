@@ -14,6 +14,7 @@ type Repository interface {
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) (UpdateMessageRow, error)
 	DeleteMessage(ctx context.Context, arg DeleteMessageParams) (DeleteMessageRow, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error)
+	GetReplyTarget(ctx context.Context, arg GetReplyTargetParams) (GetReplyTargetRow, error)
 	LockMessage(ctx context.Context, messageID uuid.UUID) (uuid.UUID, error)
 	GetReactionState(ctx context.Context, arg GetReactionStateParams) (GetReactionStateRow, error)
 	AddReaction(ctx context.Context, arg AddReactionParams) (int64, error)

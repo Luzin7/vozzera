@@ -1,7 +1,16 @@
 -- name: CreateMessage :one
-INSERT INTO messages (room_id, user_id, content)
-VALUES ($1, $2, $3)
+INSERT INTO messages (room_id, user_id, content, reply_to_message_id, reply_to_username, reply_to_content)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, room_id, user_id, content, created_at;
+
+-- name: GetReplyTarget :one
+SELECT
+    m.id,
+    m.content,
+    u.username
+FROM messages m
+JOIN users u ON m.user_id = u.id
+WHERE m.id = $1 AND m.room_id = $2 AND m.deleted_at IS NULL;
 
 -- name: GetMessagesByRoom :many
 SELECT
@@ -9,7 +18,10 @@ SELECT
     m.content,
     m.created_at,
     u.id AS user_id,
-    u.username
+    u.username,
+    m.reply_to_message_id AS reply_to_id,
+    m.reply_to_username,
+    m.reply_to_content
 FROM messages m
 JOIN users u ON m.user_id = u.id
 WHERE m.room_id = $1 AND m.deleted_at IS NULL
@@ -22,7 +34,10 @@ SELECT
     m.content,
     m.created_at,
     u.id AS user_id,
-    u.username
+    u.username,
+    m.reply_to_message_id AS reply_to_id,
+    m.reply_to_username,
+    m.reply_to_content
 FROM messages m
 JOIN users u ON m.user_id = u.id
 WHERE m.room_id = $1

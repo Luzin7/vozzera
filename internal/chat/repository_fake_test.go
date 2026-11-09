@@ -13,6 +13,7 @@ type fakeRepo struct {
 	updateMessage     func(context.Context, UpdateMessageParams) (UpdateMessageRow, error)
 	deleteMessage     func(context.Context, DeleteMessageParams) (DeleteMessageRow, error)
 	createMessage     func(context.Context, CreateMessageParams) (CreateMessageRow, error)
+	getReplyTarget    func(context.Context, GetReplyTargetParams) (GetReplyTargetRow, error)
 	lockMessage       func(context.Context, uuid.UUID) (uuid.UUID, error)
 	getReactionState  func(context.Context, GetReactionStateParams) (GetReactionStateRow, error)
 	addReaction       func(context.Context, AddReactionParams) (int64, error)
@@ -36,6 +37,9 @@ func newFakeRepo() *fakeRepo {
 		},
 		createMessage: func(context.Context, CreateMessageParams) (CreateMessageRow, error) {
 			return CreateMessageRow{}, errors.New("createMessage não configurado")
+		},
+		getReplyTarget: func(context.Context, GetReplyTargetParams) (GetReplyTargetRow, error) {
+			return GetReplyTargetRow{}, errors.New("getReplyTarget não configurado")
 		},
 		lockMessage: func(context.Context, uuid.UUID) (uuid.UUID, error) {
 			return uuid.Nil, nil
@@ -73,6 +77,10 @@ func (f *fakeRepo) DeleteMessage(ctx context.Context, arg DeleteMessageParams) (
 
 func (f *fakeRepo) CreateMessage(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
 	return f.createMessage(ctx, arg)
+}
+
+func (f *fakeRepo) GetReplyTarget(ctx context.Context, arg GetReplyTargetParams) (GetReplyTargetRow, error) {
+	return f.getReplyTarget(ctx, arg)
 }
 
 func (f *fakeRepo) GetReactionState(ctx context.Context, arg GetReactionStateParams) (GetReactionStateRow, error) {

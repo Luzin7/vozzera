@@ -54,11 +54,14 @@ func newChatSocketServer(t *testing.T) chatSocketServer {
 	pub := &fakePublisher{}
 	router := ws.NewRouter()
 	RegisterChatHandlers(router, ChatHandlerDeps{Registerer: registerer, Publisher: pub})
-	handler := ws.NewHandler(ws.HandlerDeps{
+	handler, err := ws.NewHandler(ws.HandlerDeps{
 		Registerer:     registerer,
 		Router:         router,
 		AllowedOrigins: []string{pingTestOrigin},
 	})
+	if err != nil {
+		t.Fatalf("NewHandler erro: %v", err)
+	}
 	authenticated := httpx.Auth(func(context.Context, string) (httpx.UserClaims, error) {
 		return pingTestClaims, nil
 	})

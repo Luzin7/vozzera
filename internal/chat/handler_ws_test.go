@@ -264,6 +264,37 @@ func TestChatRouter_HandleMessage(t *testing.T) {
 		}
 	})
 
+	t.Run("message com reply_to_message_id inválido é rejeitada", func(t *testing.T) {
+		reg := newFakeRegisterer()
+		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)
+		pub := &fakePublisher{}
+		repo := newFakeRepo()
+		created := false
+		repo.createMessage = func(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
+			created = true
+			return CreateMessageRow{}, nil
+		}
+		sender := NewSendMessageService(repo, pub)
+		r := ws.NewRouter()
+		RegisterChatHandlers(r, ChatHandlerDeps{Sender: sender, Registerer: reg, Publisher: pub, Authorizer: &fakeAuthorizer{}})
+
+		data, _ := json.Marshal(map[string]interface{}{
+			"room_id":             roomID.String(),
+			"content":             "hello",
+			"reply_to_message_id": "não-é-uuid",
+		})
+		err := r.HandleMessage(client, realtime.Envelope{V: 1, Type: CmdMessage, Data: data})
+		if !errors.Is(err, ErrInvalidReplyTarget) {
+			t.Errorf("erro = %v, want ErrInvalidReplyTarget", err)
+		}
+		if created {
+			t.Error("mensagem não deveria ter sido gravada")
+		}
+		if len(pub.envelopes) != 0 {
+			t.Errorf("envelopes = %d, want 0", len(pub.envelopes))
+		}
+	})
+
 	t.Run("message em sala sem acesso não é enviada", func(t *testing.T) {
 		reg := newFakeRegisterer()
 		client := realtime.NewClient(reg, nil, userID, username, sessionID, nil)

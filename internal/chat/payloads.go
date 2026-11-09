@@ -8,6 +8,12 @@ import (
 
 var pongFrame = []byte(`{"type":"` + EventPong + `"}`)
 
+type ReplyToPayload struct {
+	ID       uuid.UUID `json:"id"`
+	Username string    `json:"username"`
+	Content  string    `json:"content"`
+}
+
 type MessagePayload struct {
 	ID        uuid.UUID         `json:"id"`
 	RoomID    uuid.UUID         `json:"room_id"`
@@ -15,6 +21,7 @@ type MessagePayload struct {
 	Username  string            `json:"username"`
 	Content   string            `json:"content"`
 	CreatedAt time.Time         `json:"created_at"`
+	ReplyTo   *ReplyToPayload   `json:"reply_to"`
 	Reactions []ReactionSummary `json:"reactions"`
 }
 

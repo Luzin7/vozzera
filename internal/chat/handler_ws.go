@@ -75,14 +75,19 @@ func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
 
 	r.Handle(CmdMessage, func(ctx context.Context, c *realtime.Client, data json.RawMessage) error {
 		var cmd struct {
-			RoomID  uuid.UUID `json:"room_id"`
-			Content string    `json:"content"`
+			RoomID           uuid.UUID `json:"room_id"`
+			Content          string    `json:"content"`
+			ReplyToMessageID *string   `json:"reply_to_message_id"`
 		}
 		if err := json.Unmarshal(data, &cmd); err != nil {
 			return nil
 		}
 		if cmd.RoomID == uuid.Nil || cmd.Content == "" {
 			return nil
+		}
+		replyTo, err := parseReplyToMessageID(cmd.ReplyToMessageID)
+		if err != nil {
+			return err
 		}
 		allowed, err := deps.roomAccess(ctx, c.UserID, realtime.RoomTopic(cmd.RoomID))
 		if err != nil {
@@ -94,13 +99,25 @@ func RegisterChatHandlers(r *ws.Router, deps ChatHandlerDeps) {
 		ctxMsg, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		_, err = deps.Sender.Execute(ctxMsg, SendMessageInput{
-			RoomID:   cmd.RoomID,
-			UserID:   c.UserID,
-			Username: c.Username,
-			Content:  cmd.Content,
+			RoomID:           cmd.RoomID,
+			UserID:           c.UserID,
+			Username:         c.Username,
+			Content:          cmd.Content,
+			ReplyToMessageID: replyTo,
 		})
 		return err
 	})
+}
+
+func parseReplyToMessageID(raw *string) (*uuid.UUID, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	id, err := uuid.Parse(*raw)
+	if err != nil || id == uuid.Nil {
+		return nil, ErrInvalidReplyTarget
+	}
+	return &id, nil
 }
 
 func handleTyping(ctx context.Context, c *realtime.Client, typingType string, data json.RawMessage, deps ChatHandlerDeps) error {
