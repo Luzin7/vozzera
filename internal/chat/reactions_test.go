@@ -27,6 +27,10 @@ func noRowsRepo() *fakeRepo {
 	return repo
 }
 
+func newTestAddReactionService(repo *fakeRepo, publisher realtime.Publisher) *AddReactionService {
+	return NewAddReactionService(repo, publisher, &fakeTransactor{repo: repo})
+}
+
 func TestAddReactionService_Execute(t *testing.T) {
 	t.Run("adiciona e devolve a contagem agregada", func(t *testing.T) {
 		repo := newFakeRepo()
@@ -48,7 +52,7 @@ func TestAddReactionService_Execute(t *testing.T) {
 		}
 		events := &fakePublisher{}
 
-		out, err := NewAddReactionService(repo, events).Execute(context.Background(), ReactionInput{
+		out, err := newTestAddReactionService(repo, events).Execute(context.Background(), ReactionInput{
 			RoomID:    uuid.New(),
 			MessageID: messageID,
 			UserID:    userID,
@@ -78,7 +82,7 @@ func TestAddReactionService_Execute(t *testing.T) {
 		}
 		events := &fakePublisher{}
 
-		out, err := NewAddReactionService(repo, events).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
+		out, err := newTestAddReactionService(repo, events).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
 		if err != nil {
 			t.Fatalf("Execute() erro inesperado: %v", err)
 		}
@@ -91,14 +95,14 @@ func TestAddReactionService_Execute(t *testing.T) {
 	})
 
 	t.Run("emoji vazio", func(t *testing.T) {
-		_, err := NewAddReactionService(newFakeRepo(), &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "   "})
+		_, err := newTestAddReactionService(newFakeRepo(), &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "   "})
 		if !errors.Is(err, ErrEmptyEmoji) {
 			t.Errorf("erro = %v, want ErrEmptyEmoji", err)
 		}
 	})
 
 	t.Run("emoji longo demais", func(t *testing.T) {
-		_, err := NewAddReactionService(newFakeRepo(), &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: strings.Repeat("🔥", 11)})
+		_, err := newTestAddReactionService(newFakeRepo(), &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: strings.Repeat("🔥", 11)})
 		if !errors.Is(err, ErrEmojiTooLong) {
 			t.Errorf("erro = %v, want ErrEmojiTooLong", err)
 		}
@@ -115,7 +119,7 @@ func TestAddReactionService_Execute(t *testing.T) {
 			return 1, nil
 		}
 
-		_, err := NewAddReactionService(repo, &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
+		_, err := newTestAddReactionService(repo, &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
 		if !errors.Is(err, ErrTooManyReactions) {
 			t.Errorf("erro = %v, want ErrTooManyReactions", err)
 		}
@@ -126,31 +130,88 @@ func TestAddReactionService_Execute(t *testing.T) {
 
 	t.Run("emoji já existente é permitido no limite", func(t *testing.T) {
 		repo := newFakeRepo()
+		inserted := false
 		repo.getReactionState = func(context.Context, GetReactionStateParams) (GetReactionStateRow, error) {
 			return GetReactionStateRow{DistinctEmojiCount: 20, EmojiExists: true}, nil
 		}
 		repo.addReaction = func(context.Context, AddReactionParams) (int64, error) {
-			return 1, nil
+			inserted = true
+			return 0, nil
 		}
 		repo.getReactionsByIDs = func(context.Context, []uuid.UUID) ([]GetReactionsByMessageIDsRow, error) {
 			return nil, nil
 		}
 
-		_, err := NewAddReactionService(repo, &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
+		_, err := newTestAddReactionService(repo, &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
 		if err != nil {
 			t.Fatalf("Execute() erro inesperado: %v", err)
+		}
+		if !inserted {
+			t.Error("emoji já existente no limite não chegou ao insert idempotente")
+		}
+	})
+
+	t.Run("trava a mensagem e lê o estado antes de inserir, numa transação", func(t *testing.T) {
+		repo := newFakeRepo()
+		transactor := &fakeTransactor{repo: repo}
+		var order []string
+
+		repo.lockMessage = func(context.Context, uuid.UUID) (uuid.UUID, error) {
+			order = append(order, "lock")
+			if !transactor.inTx {
+				t.Error("lock fora da transação")
+			}
+			return uuid.Nil, nil
+		}
+		repo.getReactionState = func(context.Context, GetReactionStateParams) (GetReactionStateRow, error) {
+			order = append(order, "state")
+			if !transactor.inTx {
+				t.Error("leitura do estado fora da transação")
+			}
+			return GetReactionStateRow{DistinctEmojiCount: 1}, nil
+		}
+		repo.addReaction = func(context.Context, AddReactionParams) (int64, error) {
+			order = append(order, "insert")
+			if !transactor.inTx {
+				t.Error("insert fora da transação")
+			}
+			return 1, nil
+		}
+		repo.getReactionsByIDs = func(context.Context, []uuid.UUID) ([]GetReactionsByMessageIDsRow, error) {
+			order = append(order, "summary")
+			if !transactor.inTx {
+				t.Error("leitura da contagem fora da transação")
+			}
+			return nil, nil
+		}
+
+		_, err := NewAddReactionService(repo, &fakePublisher{}, transactor).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
+		if err != nil {
+			t.Fatalf("Execute() erro inesperado: %v", err)
+		}
+		want := []string{"lock", "state", "insert", "summary"}
+		if len(order) != len(want) {
+			t.Fatalf("ordem = %v, want %v", order, want)
+		}
+		for i := range want {
+			if order[i] != want[i] {
+				t.Fatalf("ordem = %v, want %v", order, want)
+			}
+		}
+		if transactor.runs != 1 {
+			t.Errorf("transações = %d, want 1", transactor.runs)
 		}
 	})
 
 	t.Run("mensagem de outra sala", func(t *testing.T) {
-		_, err := NewAddReactionService(noRowsRepo(), &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
+		_, err := newTestAddReactionService(noRowsRepo(), &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
 		if !errors.Is(err, ErrMessageNotFound) {
 			t.Errorf("erro = %v, want ErrMessageNotFound", err)
 		}
 	})
 
 	t.Run("mensagem apagada", func(t *testing.T) {
-		_, err := NewAddReactionService(noRowsRepo(), &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
+		_, err := newTestAddReactionService(noRowsRepo(), &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
 		if !errors.Is(err, ErrMessageNotFound) {
 			t.Errorf("erro = %v, want ErrMessageNotFound", err)
 		}
@@ -174,7 +235,7 @@ func TestAddReactionService_Execute(t *testing.T) {
 		}
 		events := &fakePublisher{}
 
-		_, err := NewAddReactionService(repo, events).Execute(context.Background(), ReactionInput{
+		_, err := newTestAddReactionService(repo, events).Execute(context.Background(), ReactionInput{
 			RoomID:    roomID,
 			MessageID: messageID,
 			UserID:    userID,

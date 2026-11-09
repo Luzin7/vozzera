@@ -25,6 +25,7 @@ type ChatDeps struct {
 	Repo       Repository
 	RoomAccess RoomAccess
 	Publisher  realtime.Publisher
+	Transactor Transactor
 	AuthMW     func(http.Handler) http.Handler
 }
 
@@ -42,7 +43,7 @@ func RegisterHandlers(mux *http.ServeMux, deps ChatDeps) {
 		getMessages:    NewGetMessagesService(deps.Repo),
 		updateMessage:  NewUpdateMessageService(deps.Repo, deps.Publisher),
 		deleteMessage:  NewDeleteMessageService(deps.Repo, deps.Publisher),
-		addReaction:    NewAddReactionService(deps.Repo, deps.Publisher),
+		addReaction:    NewAddReactionService(deps.Repo, deps.Publisher, deps.Transactor),
 		removeReaction: NewRemoveReactionService(deps.Repo, deps.Publisher),
 		roomAccess:     deps.RoomAccess,
 	}

@@ -26,6 +26,7 @@ func newChatMux(repo *fakeRepo, access RoomAccess) *http.ServeMux {
 		Repo:       repo,
 		RoomAccess: access,
 		Publisher:  &fakePublisher{},
+		Transactor: &fakeTransactor{repo: repo},
 		AuthMW: httpx.Auth(func(context.Context, string) (httpx.UserClaims, error) {
 			return httpx.UserClaims{UserID: uuid.New(), Username: "alice", Role: httpx.RoleUser}, nil
 		}),

@@ -47,8 +47,8 @@ type reactionService struct {
 	publisher realtime.Publisher
 }
 
-func (s reactionService) summaryAfterChange(ctx context.Context, messageID uuid.UUID, emoji string) (ReactionSummary, error) {
-	rows, err := s.repo.GetReactionsByMessageIDs(ctx, []uuid.UUID{messageID})
+func summarizeReaction(ctx context.Context, repo Repository, messageID uuid.UUID, emoji string) (ReactionSummary, error) {
+	rows, err := repo.GetReactionsByMessageIDs(ctx, []uuid.UUID{messageID})
 	if err != nil {
 		return ReactionSummary{}, err
 	}
@@ -61,6 +61,10 @@ func (s reactionService) summaryAfterChange(ctx context.Context, messageID uuid.
 	}
 
 	return ReactionSummary{Emoji: emoji, UserIDs: []uuid.UUID{}}, nil
+}
+
+func (s reactionService) summaryAfterChange(ctx context.Context, messageID uuid.UUID, emoji string) (ReactionSummary, error) {
+	return summarizeReaction(ctx, s.repo, messageID, emoji)
 }
 
 func (s reactionService) publish(ctx context.Context, event reactionEvent) error {
@@ -95,10 +99,11 @@ func (s reactionService) ensureReactable(ctx context.Context, in ReactionInput) 
 
 type AddReactionService struct {
 	reactionService
+	transactor Transactor
 }
 
-func NewAddReactionService(repo Repository, publisher realtime.Publisher) *AddReactionService {
-	return &AddReactionService{reactionService{repo: repo, publisher: publisher}}
+func NewAddReactionService(repo Repository, publisher realtime.Publisher, transactor Transactor) *AddReactionService {
+	return &AddReactionService{reactionService{repo: repo, publisher: publisher}, transactor}
 }
 
 func (s *AddReactionService) Execute(ctx context.Context, in ReactionInput) (ReactionOutput, error) {
@@ -108,29 +113,34 @@ func (s *AddReactionService) Execute(ctx context.Context, in ReactionInput) (Rea
 	}
 	in.Emoji = emoji
 
-	state, err := s.ensureReactable(ctx, in)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ReactionOutput{}, ErrMessageNotFound
-	}
-	if err != nil {
-		return ReactionOutput{}, ErrAddReaction(err)
-	}
-	if !state.EmojiExists && state.DistinctEmojiCount >= maxDistinctEmojis {
-		return ReactionOutput{}, ErrTooManyReactions
-	}
+	var inserted int64
+	var reaction ReactionSummary
+	err = s.transactor.WithinTx(ctx, func(repo Repository) error {
+		state, err := reactionStateForUpdate(ctx, repo, in)
+		if err != nil {
+			return err
+		}
+		if !state.EmojiExists && state.DistinctEmojiCount >= maxDistinctEmojis {
+			return ErrTooManyReactions
+		}
 
-	inserted, err := s.repo.AddReaction(ctx, AddReactionParams{
-		MessageID: in.MessageID,
-		UserID:    in.UserID,
-		Emoji:     emoji,
+		inserted, err = repo.AddReaction(ctx, AddReactionParams{
+			MessageID: in.MessageID,
+			UserID:    in.UserID,
+			Emoji:     emoji,
+		})
+		if err != nil {
+			return ErrAddReaction(err)
+		}
+
+		reaction, err = summarizeReaction(ctx, repo, in.MessageID, emoji)
+		if err != nil {
+			return ErrAddReaction(err)
+		}
+		return nil
 	})
 	if err != nil {
-		return ReactionOutput{}, ErrAddReaction(err)
-	}
-
-	reaction, err := s.summaryAfterChange(ctx, in.MessageID, emoji)
-	if err != nil {
-		return ReactionOutput{}, ErrAddReaction(err)
+		return ReactionOutput{}, err
 	}
 
 	if inserted == 0 {
@@ -142,6 +152,28 @@ func (s *AddReactionService) Execute(ctx context.Context, in ReactionInput) (Rea
 	}
 
 	return ReactionOutput{Reaction: reaction}, nil
+}
+
+func reactionStateForUpdate(ctx context.Context, repo Repository, in ReactionInput) (GetReactionStateRow, error) {
+	if _, err := repo.LockMessage(ctx, in.MessageID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return GetReactionStateRow{}, ErrMessageNotFound
+		}
+		return GetReactionStateRow{}, ErrAddReaction(err)
+	}
+
+	state, err := repo.GetReactionState(ctx, GetReactionStateParams{
+		ReactionEmoji: in.Emoji,
+		MessageID:     in.MessageID,
+		RoomID:        in.RoomID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return GetReactionStateRow{}, ErrMessageNotFound
+	}
+	if err != nil {
+		return GetReactionStateRow{}, ErrAddReaction(err)
+	}
+	return state, nil
 }
 
 type RemoveReactionService struct {

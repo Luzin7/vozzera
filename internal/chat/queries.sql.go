@@ -296,6 +296,17 @@ func (q *Queries) GetReactionsByMessageIDs(ctx context.Context, messageIds []uui
 	return items, nil
 }
 
+const lockMessage = `-- name: LockMessage :one
+SELECT id FROM messages WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockMessage(ctx context.Context, messageID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockMessage, messageID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const removeReaction = `-- name: RemoveReaction :execrows
 DELETE FROM message_reactions
 WHERE message_id = $1

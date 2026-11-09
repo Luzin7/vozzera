@@ -43,6 +43,9 @@ SET deleted_at = NOW(), content = NULL
 WHERE id = $1 AND room_id = sqlc.arg(room_id) AND (user_id = $2 OR sqlc.arg(is_mod)::boolean)
 RETURNING id, room_id, user_id, content, created_at;
 
+-- name: LockMessage :one
+SELECT id FROM messages WHERE id = sqlc.arg(message_id) FOR UPDATE;
+
 -- name: GetReactionState :one
 SELECT
     (SELECT COUNT(DISTINCT emoji) FROM message_reactions WHERE message_id = m.id)::int AS distinct_emoji_count,

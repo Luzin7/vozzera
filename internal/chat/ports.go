@@ -13,6 +13,7 @@ type Repository interface {
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) (UpdateMessageRow, error)
 	DeleteMessage(ctx context.Context, arg DeleteMessageParams) (DeleteMessageRow, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error)
+	LockMessage(ctx context.Context, messageID uuid.UUID) (uuid.UUID, error)
 	GetReactionState(ctx context.Context, arg GetReactionStateParams) (GetReactionStateRow, error)
 	AddReaction(ctx context.Context, arg AddReactionParams) (int64, error)
 	RemoveReaction(ctx context.Context, arg RemoveReactionParams) (int64, error)
@@ -21,4 +22,8 @@ type Repository interface {
 
 type RoomAccess interface {
 	CanAccess(ctx context.Context, roomID uuid.UUID, claims httpx.UserClaims) (bool, error)
+}
+
+type Transactor interface {
+	WithinTx(ctx context.Context, fn func(Repository) error) error
 }
