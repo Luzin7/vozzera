@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"errors"
+
+	"github.com/google/uuid"
 )
 
 type fakeRepo struct {
@@ -11,6 +13,10 @@ type fakeRepo struct {
 	updateMessage     func(context.Context, UpdateMessageParams) (UpdateMessageRow, error)
 	deleteMessage     func(context.Context, DeleteMessageParams) (DeleteMessageRow, error)
 	createMessage     func(context.Context, CreateMessageParams) (CreateMessageRow, error)
+	getReactionState  func(context.Context, GetReactionStateParams) (GetReactionStateRow, error)
+	addReaction       func(context.Context, AddReactionParams) (int64, error)
+	removeReaction    func(context.Context, RemoveReactionParams) (int64, error)
+	getReactionsByIDs func(context.Context, []uuid.UUID) ([]GetReactionsByMessageIDsRow, error)
 }
 
 func newFakeRepo() *fakeRepo {
@@ -29,6 +35,18 @@ func newFakeRepo() *fakeRepo {
 		},
 		createMessage: func(context.Context, CreateMessageParams) (CreateMessageRow, error) {
 			return CreateMessageRow{}, errors.New("createMessage não configurado")
+		},
+		getReactionState: func(context.Context, GetReactionStateParams) (GetReactionStateRow, error) {
+			return GetReactionStateRow{}, errors.New("getReactionState não configurado")
+		},
+		addReaction: func(context.Context, AddReactionParams) (int64, error) {
+			return 0, errors.New("addReaction não configurado")
+		},
+		removeReaction: func(context.Context, RemoveReactionParams) (int64, error) {
+			return 0, errors.New("removeReaction não configurado")
+		},
+		getReactionsByIDs: func(context.Context, []uuid.UUID) ([]GetReactionsByMessageIDsRow, error) {
+			return nil, nil
 		},
 	}
 }
@@ -51,6 +69,22 @@ func (f *fakeRepo) DeleteMessage(ctx context.Context, arg DeleteMessageParams) (
 
 func (f *fakeRepo) CreateMessage(ctx context.Context, arg CreateMessageParams) (CreateMessageRow, error) {
 	return f.createMessage(ctx, arg)
+}
+
+func (f *fakeRepo) GetReactionState(ctx context.Context, arg GetReactionStateParams) (GetReactionStateRow, error) {
+	return f.getReactionState(ctx, arg)
+}
+
+func (f *fakeRepo) AddReaction(ctx context.Context, arg AddReactionParams) (int64, error) {
+	return f.addReaction(ctx, arg)
+}
+
+func (f *fakeRepo) RemoveReaction(ctx context.Context, arg RemoveReactionParams) (int64, error) {
+	return f.removeReaction(ctx, arg)
+}
+
+func (f *fakeRepo) GetReactionsByMessageIDs(ctx context.Context, messageIDs []uuid.UUID) ([]GetReactionsByMessageIDsRow, error) {
+	return f.getReactionsByIDs(ctx, messageIDs)
 }
 
 var _ Repository = (*fakeRepo)(nil)

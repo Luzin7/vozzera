@@ -13,6 +13,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addReaction = `-- name: AddReaction :execrows
+INSERT INTO message_reactions (message_id, user_id, emoji)
+VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type AddReactionParams struct {
+	MessageID uuid.UUID `json:"message_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Emoji     string    `json:"emoji"`
+}
+
+func (q *Queries) AddReaction(ctx context.Context, arg AddReactionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, addReaction, arg.MessageID, arg.UserID, arg.Emoji)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createMessage = `-- name: CreateMessage :one
 INSERT INTO messages (room_id, user_id, content)
 VALUES ($1, $2, $3)
@@ -199,6 +219,102 @@ func (q *Queries) GetMessagesByRoomBefore(ctx context.Context, arg GetMessagesBy
 		return nil, err
 	}
 	return items, nil
+}
+
+const getReactionState = `-- name: GetReactionState :one
+SELECT
+    (SELECT COUNT(DISTINCT emoji) FROM message_reactions WHERE message_id = m.id)::int AS distinct_emoji_count,
+    EXISTS (
+        SELECT 1 FROM message_reactions mr
+        WHERE mr.message_id = m.id AND mr.emoji = $1
+    ) AS emoji_exists
+FROM messages m
+WHERE m.id = $2
+    AND m.room_id = $3
+    AND m.deleted_at IS NULL
+`
+
+type GetReactionStateParams struct {
+	ReactionEmoji string    `json:"reaction_emoji"`
+	MessageID     uuid.UUID `json:"message_id"`
+	RoomID        uuid.UUID `json:"room_id"`
+}
+
+type GetReactionStateRow struct {
+	DistinctEmojiCount int32 `json:"distinct_emoji_count"`
+	EmojiExists        bool  `json:"emoji_exists"`
+}
+
+func (q *Queries) GetReactionState(ctx context.Context, arg GetReactionStateParams) (GetReactionStateRow, error) {
+	row := q.db.QueryRow(ctx, getReactionState, arg.ReactionEmoji, arg.MessageID, arg.RoomID)
+	var i GetReactionStateRow
+	err := row.Scan(&i.DistinctEmojiCount, &i.EmojiExists)
+	return i, err
+}
+
+const getReactionsByMessageIDs = `-- name: GetReactionsByMessageIDs :many
+SELECT
+    r.message_id,
+    r.emoji,
+    COUNT(*)::int AS count,
+    array_agg(r.user_id ORDER BY r.created_at, r.user_id)::uuid[] AS user_ids
+FROM message_reactions r
+WHERE r.message_id = ANY($1::uuid[])
+GROUP BY r.message_id, r.emoji
+ORDER BY r.message_id, MIN(r.created_at), r.emoji
+`
+
+type GetReactionsByMessageIDsRow struct {
+	MessageID uuid.UUID   `json:"message_id"`
+	Emoji     string      `json:"emoji"`
+	Count     int32       `json:"count"`
+	UserIds   []uuid.UUID `json:"user_ids"`
+}
+
+func (q *Queries) GetReactionsByMessageIDs(ctx context.Context, messageIds []uuid.UUID) ([]GetReactionsByMessageIDsRow, error) {
+	rows, err := q.db.Query(ctx, getReactionsByMessageIDs, messageIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetReactionsByMessageIDsRow
+	for rows.Next() {
+		var i GetReactionsByMessageIDsRow
+		if err := rows.Scan(
+			&i.MessageID,
+			&i.Emoji,
+			&i.Count,
+			&i.UserIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const removeReaction = `-- name: RemoveReaction :execrows
+DELETE FROM message_reactions
+WHERE message_id = $1
+    AND user_id = $2
+    AND emoji = $3
+`
+
+type RemoveReactionParams struct {
+	MessageID uuid.UUID `json:"message_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Emoji     string    `json:"emoji"`
+}
+
+func (q *Queries) RemoveReaction(ctx context.Context, arg RemoveReactionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeReaction, arg.MessageID, arg.UserID, arg.Emoji)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateMessage = `-- name: UpdateMessage :one

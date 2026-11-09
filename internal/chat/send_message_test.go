@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +61,9 @@ func TestSendMessageService_Execute(t *testing.T) {
 		}
 		if payload.Username != "luand" {
 			t.Errorf("username = %q, want %q", payload.Username, "luand")
+		}
+		if !strings.Contains(string(env.Data), `"reactions":[]`) {
+			t.Errorf("payload = %s, want reactions como []", env.Data)
 		}
 	})
 }

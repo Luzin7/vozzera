@@ -59,6 +59,7 @@ func (s *SendMessageService) Execute(ctx context.Context, in SendMessageInput) (
 		Username:  in.Username,
 		Content:   msg.Content.String,
 		CreatedAt: msg.CreatedAt.Time,
+		Reactions: []ReactionSummary{},
 	}
 
 	payloadBytes, err := json.Marshal(payload)

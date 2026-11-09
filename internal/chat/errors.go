@@ -14,6 +14,10 @@ var (
 	ErrRoomNotFound        = httpx.Errorf(http.StatusNotFound, "Sala não encontrada")
 	ErrMessageNotEditable  = httpx.Errorf(http.StatusForbidden, "Mensagem não encontrada ou você não tem permissão para editá-la")
 	ErrMessageNotDeletable = httpx.Errorf(http.StatusForbidden, "Mensagem não encontrada ou você não tem permissão para deletá-la")
+	ErrMessageNotFound     = httpx.Errorf(http.StatusNotFound, "Mensagem não encontrada")
+	ErrEmptyEmoji          = httpx.Errorf(http.StatusBadRequest, "O emoji não pode ser vazio")
+	ErrEmojiTooLong        = httpx.Errorf(http.StatusBadRequest, "O emoji deve ter no máximo 10 caracteres")
+	ErrTooManyReactions    = httpx.Errorf(http.StatusBadRequest, "A mensagem já tem o máximo de 20 emojis diferentes")
 )
 
 func ErrGetMessages(err error) error {
@@ -30,6 +34,14 @@ func ErrDeleteMessage(err error) error {
 
 func ErrCreateMessage(err error) error {
 	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao salvar mensagem", err)
+}
+
+func ErrAddReaction(err error) error {
+	return httpx.Wrapf(http.StatusInternalServerError, "Erro interno ao adicionar reação", err)
+}
+
+func ErrRemoveReaction(err error) error {
+	return httpx.Wrapf(http.StatusInternalServerError, "Erro interno ao remover reação", err)
 }
 
 func ErrAuthorizeRoom(err error) error {
