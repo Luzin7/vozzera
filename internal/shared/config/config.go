@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrKeyValueURLRequired   = errors.New("KEY_VALUE_URL é obrigatória")
-	ErrKeyValuePrefixInvalid = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
+	ErrKeyValueURLRequired        = errors.New("KEY_VALUE_URL é obrigatória")
+	ErrKeyValuePrefixInvalid      = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
+	ErrSwaggerCredentialsRequired = errors.New("SWAGGER_BASIC_USER e SWAGGER_BASIC_PASSWORD são obrigatórias quando SWAGGER_ENABLED=true")
 
 	keyValuePrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 )
@@ -27,21 +28,24 @@ type SendGridConfig struct {
 }
 
 type Config struct {
-	DatabaseURL        string
-	InviteCode         string
-	Port               string
-	LiveKitURL         string
-	LiveKitAPIKey      string
-	LiveKitAPISecret   string
-	KeyValueURL        string
-	KeyValuePrefix     string
-	CORSOrigins        []string
-	SessionTTL         time.Duration
-	SessionTouchWindow time.Duration
-	PasswordResetTTL   time.Duration
-	AppURL             string
-	ClientIPHeader     string
-	SendGridConfig     SendGridConfig
+	DatabaseURL          string
+	InviteCode           string
+	Port                 string
+	LiveKitURL           string
+	LiveKitAPIKey        string
+	LiveKitAPISecret     string
+	KeyValueURL          string
+	KeyValuePrefix       string
+	CORSOrigins          []string
+	SessionTTL           time.Duration
+	SessionTouchWindow   time.Duration
+	PasswordResetTTL     time.Duration
+	AppURL               string
+	ClientIPHeader       string
+	SwaggerEnabled       bool
+	SwaggerBasicUser     string
+	SwaggerBasicPassword string
+	SendGridConfig       SendGridConfig
 }
 
 func Load() *Config {
@@ -53,20 +57,23 @@ func Load() *Config {
 	}
 
 	return &Config{
-		DatabaseURL:        os.Getenv("DATABASE_URL"),
-		InviteCode:         os.Getenv("INVITE_CODE"),
-		Port:               port,
-		LiveKitURL:         os.Getenv("LIVEKIT_URL"),
-		LiveKitAPIKey:      os.Getenv("LIVEKIT_API_KEY"),
-		LiveKitAPISecret:   os.Getenv("LIVEKIT_API_SECRET"),
-		KeyValueURL:        os.Getenv("KEY_VALUE_URL"),
-		KeyValuePrefix:     os.Getenv("KEY_VALUE_PREFIX"),
-		CORSOrigins:        splitList(os.Getenv("CORS_ORIGINS")),
-		SessionTTL:         durationEnv("SESSION_TTL", 7*24*time.Hour),
-		SessionTouchWindow: durationEnv("SESSION_TOUCH_WINDOW", 24*time.Hour),
-		PasswordResetTTL:   durationEnv("PASSWORD_RESET_TTL", 30*time.Minute),
-		AppURL:             os.Getenv("APP_URL"),
-		ClientIPHeader:     strings.TrimSpace(os.Getenv("CLIENT_IP_HEADER")),
+		DatabaseURL:          os.Getenv("DATABASE_URL"),
+		InviteCode:           os.Getenv("INVITE_CODE"),
+		Port:                 port,
+		LiveKitURL:           os.Getenv("LIVEKIT_URL"),
+		LiveKitAPIKey:        os.Getenv("LIVEKIT_API_KEY"),
+		LiveKitAPISecret:     os.Getenv("LIVEKIT_API_SECRET"),
+		KeyValueURL:          os.Getenv("KEY_VALUE_URL"),
+		KeyValuePrefix:       os.Getenv("KEY_VALUE_PREFIX"),
+		CORSOrigins:          splitList(os.Getenv("CORS_ORIGINS")),
+		SessionTTL:           durationEnv("SESSION_TTL", 7*24*time.Hour),
+		SessionTouchWindow:   durationEnv("SESSION_TOUCH_WINDOW", 24*time.Hour),
+		PasswordResetTTL:     durationEnv("PASSWORD_RESET_TTL", 30*time.Minute),
+		AppURL:               os.Getenv("APP_URL"),
+		ClientIPHeader:       strings.TrimSpace(os.Getenv("CLIENT_IP_HEADER")),
+		SwaggerEnabled:       boolEnv("SWAGGER_ENABLED", false),
+		SwaggerBasicUser:     os.Getenv("SWAGGER_BASIC_USER"),
+		SwaggerBasicPassword: os.Getenv("SWAGGER_BASIC_PASSWORD"),
 		SendGridConfig: SendGridConfig{
 			APIKey:      os.Getenv("SENDGRID_API_KEY"),
 			FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
@@ -81,6 +88,16 @@ func (c *Config) ValidateKeyValue() error {
 	}
 	if !keyValuePrefixPattern.MatchString(c.KeyValuePrefix) {
 		return ErrKeyValuePrefixInvalid
+	}
+	return nil
+}
+
+func (c *Config) ValidateSwagger() error {
+	if !c.SwaggerEnabled {
+		return nil
+	}
+	if c.SwaggerBasicUser == "" || c.SwaggerBasicPassword == "" {
+		return ErrSwaggerCredentialsRequired
 	}
 	return nil
 }
@@ -111,6 +128,18 @@ func intEnv(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func boolEnv(key string, fallback bool) bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return v
 }
 
 func splitList(raw string) []string {
