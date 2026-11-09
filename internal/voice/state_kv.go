@@ -307,8 +307,12 @@ func (s *kvVoiceRoomState) PresenceRevision(ctx context.Context, roomID uuid.UUI
 
 func (s *kvVoiceRoomState) HydrateRoom(ctx context.Context, in RoomHydration) (HydrateResult, error) {
 	sessionMillis, origin := sessionOrigin(in.CreatedAt, time.Now())
-	args := make([]any, 0, len(in.Participants)*2+4)
-	args = append(args, sessionMillis, origin, in.ExpectedRevision, in.RoomID.String())
+	preserveEmpty := 0
+	if in.PreserveEmpty {
+		preserveEmpty = 1
+	}
+	args := make([]any, 0, len(in.Participants)*2+5)
+	args = append(args, sessionMillis, origin, in.ExpectedRevision, preserveEmpty, in.RoomID.String())
 	for _, p := range in.Participants {
 		value, err := json.Marshal(kvParticipant{UserID: p.UserID, Username: p.Username})
 		if err != nil {

@@ -302,6 +302,9 @@ func (s *memoryVoiceRoomState) HydrateRoom(_ context.Context, in RoomHydration) 
 	if s.revisions[roomID] != in.ExpectedRevision {
 		return HydrateResult{Conflict: true, SessionStartedAt: s.sessionLocked(roomID)}, nil
 	}
+	if len(participants) == 0 && in.PreserveEmpty {
+		return HydrateResult{SessionStartedAt: s.sessionLocked(roomID)}, nil
+	}
 	hadPresence := len(s.presence[roomID]) > 0
 	changed := s.reconcilePresenceLocked(roomID, participants)
 	if changed {

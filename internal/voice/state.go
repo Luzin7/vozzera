@@ -53,6 +53,7 @@ type RoomHydration struct {
 	Participants     []Participant
 	CreatedAt        time.Time
 	ExpectedRevision int64
+	PreserveEmpty    bool
 }
 
 type HydrateResult struct {

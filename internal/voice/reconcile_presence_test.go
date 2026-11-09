@@ -211,12 +211,15 @@ func TestHydratePresenceService_ResolveAusenteAoEsvaziarSala(t *testing.T) {
 			mustJoin(t, state, roomID, participantOf(awayUser, "sid-away"), at(0))
 			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-active"), at(0))
 			mustEnterAway(t, state, newAwayEntry(roomID, forUser(awayUser)))
+			service := newHydrateService(listerWithParticipants(roomID), state, publisher)
 
-			err := newHydrateService(listerWithParticipants(roomID), state, publisher).Execute(context.Background())
-
-			if err != nil {
-				t.Fatalf("Execute erro: %v", err)
+			if err := service.Execute(context.Background()); err != nil {
+				t.Fatalf("primeiro Execute erro: %v", err)
 			}
+			if err := service.Execute(context.Background()); err != nil {
+				t.Fatalf("segundo Execute erro: %v", err)
+			}
+
 			snapshot := mustSnapshot(t, state, roomID)
 			if len(snapshot.Away) != 0 {
 				t.Fatalf("away = %v, want vazio", awayUserIDs(snapshot))
@@ -232,6 +235,120 @@ func TestHydratePresenceService_ResolveAusenteAoEsvaziarSala(t *testing.T) {
 				t.Fatalf("LeaveAway devolveu %+v, want nil", stale)
 			}
 			assertAwayEnded(t, publisher, awayUser)
+		})
+	}
+}
+
+func mustHydrate(t *testing.T, service *HydratePresenceService) {
+	t.Helper()
+	if err := service.Execute(context.Background()); err != nil {
+		t.Fatalf("Execute erro: %v", err)
+	}
+}
+
+func TestHydratePresenceService_MantemSalaVaziaAteASegundaObservacao(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			publisher := &lockedPublisher{}
+			roomID, awayUser := uuid.New(), uuid.New()
+			mustJoin(t, state, roomID, participantOf(awayUser, "sid-away"), at(0))
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-active"), at(0))
+			mustEnterAway(t, state, newAwayEntry(roomID, forUser(awayUser)))
+			service := newHydrateService(listerWithParticipants(roomID), state, publisher)
+			buf := captureLog(t)
+
+			mustHydrate(t, service)
+
+			snapshot := mustSnapshot(t, state, roomID)
+			if len(snapshot.Participants) != 2 || len(snapshot.Away) != 1 || snapshot.SessionStartedAt == nil {
+				t.Fatalf("snapshot = %+v, want presença, sessão e ausente preservados", snapshot)
+			}
+			if got := publisher.types(); len(got) != 0 {
+				t.Errorf("publicado = %v, want nada na primeira observação", got)
+			}
+			if !strings.Contains(buf.String(), "empty_pending=1") {
+				t.Errorf("log = %q, want empty_pending=1", buf.String())
+			}
+
+			mustHydrate(t, service)
+
+			snapshot = mustSnapshot(t, state, roomID)
+			if len(snapshot.Participants) != 0 || len(snapshot.Away) != 0 || snapshot.SessionStartedAt != nil {
+				t.Fatalf("snapshot = %+v, want tudo limpo", snapshot)
+			}
+			assertAwayEnded(t, publisher, awayUser)
+		})
+	}
+}
+
+func TestHydratePresenceService_NaoVazioResetaContagemDeSalaVazia(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-stale"), at(0))
+			keep := participantOf(uuid.New(), "sid-keep")
+			lister := listerWithParticipants(roomID, keep)
+			service := newHydrateService(lister, state, &lockedPublisher{})
+
+			lister.participants[roomID.String()] = nil
+			mustHydrate(t, service)
+
+			lister.participants[roomID.String()] = []Participant{keep}
+			mustHydrate(t, service)
+
+			lister.participants[roomID.String()] = nil
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID, "sid-keep")
+		})
+	}
+}
+
+func TestHydratePresenceService_ConflitoNaoContaComoObservacaoVazia(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			base := harness.state(t)
+			roomID := uuid.New()
+			mustJoin(t, base, roomID, participantOf(uuid.New(), "sid-present"), at(0))
+			state := &joinBeforeHydrateState{
+				VoiceRoomState: base,
+				join:           JoinInput{RoomID: roomID, Participant: participantOf(uuid.New(), "sid-late"), At: at(0)},
+			}
+			service := newHydrateService(listerWithParticipants(roomID), state, &lockedPublisher{})
+
+			if err := service.Execute(context.Background()); err == nil {
+				t.Fatal("Execute deveria sinalizar conflito")
+			}
+			assertParticipantSIDs(t, base, roomID, "sid-present", "sid-late")
+
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, base, roomID, "sid-present", "sid-late")
+		})
+	}
+}
+
+func TestHydratePresenceService_DescartaContagemDeSalaForaDaReconciliacao(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-present"), at(0))
+			lister := listerWithParticipants(roomID)
+			lister.participants[roomID.String()] = nil
+			service := newHydrateService(lister, state, &lockedPublisher{})
+
+			mustHydrate(t, service)
+
+			lister.rooms = nil
+			mustHydrate(t, service)
+
+			lister.rooms = []LiveKitRoom{{Name: roomID.String(), CreatedAt: time.UnixMilli(sessionCreatedMs)}}
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID, "sid-present")
 		})
 	}
 }
