@@ -98,16 +98,22 @@ func (f *fakeRepo) GetReactionsByMessageIDs(ctx context.Context, messageIDs []uu
 var _ Repository = (*fakeRepo)(nil)
 
 type fakeTransactor struct {
-	repo Repository
-	runs int
-	inTx bool
-	err  error
+	repo   Repository
+	began  func(TxLimits)
+	limits TxLimits
+	runs   int
+	inTx   bool
+	err    error
 }
 
-func (f *fakeTransactor) WithinTx(_ context.Context, fn func(Repository) error) error {
+func (f *fakeTransactor) WithinTx(_ context.Context, limits TxLimits, fn func(Repository) error) error {
 	f.runs++
+	f.limits = limits
 	if f.err != nil {
 		return f.err
+	}
+	if f.began != nil {
+		f.began(limits)
 	}
 	f.inTx = true
 	defer func() { f.inTx = false }()

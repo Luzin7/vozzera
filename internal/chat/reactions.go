@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,6 +17,9 @@ import (
 const (
 	maxEmojiRunes     = 10
 	maxDistinctEmojis = 20
+
+	reactionLockTimeout      = 2 * time.Second
+	reactionStatementTimeout = 5 * time.Second
 )
 
 type ReactionSummary struct {
@@ -89,6 +93,10 @@ func (s reactionService) publish(ctx context.Context, event reactionEvent) error
 	})
 }
 
+func logReactionPublishFailure(eventType string, in ReactionInput, err error) {
+	log.Printf("chat.reaction_publish_failed level=error type=%s message_id=%s emoji=%q user_id=%s err=%q", eventType, in.MessageID, in.Emoji, in.UserID, err)
+}
+
 func (s reactionService) ensureReactable(ctx context.Context, in ReactionInput) (GetReactionStateRow, error) {
 	return s.repo.GetReactionState(ctx, GetReactionStateParams{
 		ReactionEmoji: in.Emoji,
@@ -113,10 +121,13 @@ func (s *AddReactionService) Execute(ctx context.Context, in ReactionInput) (Rea
 	}
 	in.Emoji = emoji
 
+	txCtx, cancel := context.WithTimeout(ctx, reactionStatementTimeout)
+	defer cancel()
+
 	var inserted int64
 	var reaction ReactionSummary
-	err = s.transactor.WithinTx(ctx, func(repo Repository) error {
-		state, err := reactionStateForUpdate(ctx, repo, in)
+	err = s.transactor.WithinTx(txCtx, TxLimits{LockTimeout: reactionLockTimeout, StatementTimeout: reactionStatementTimeout}, func(repo Repository) error {
+		state, err := reactionStateForUpdate(txCtx, repo, in)
 		if err != nil {
 			return err
 		}
@@ -124,7 +135,7 @@ func (s *AddReactionService) Execute(ctx context.Context, in ReactionInput) (Rea
 			return ErrTooManyReactions
 		}
 
-		inserted, err = repo.AddReaction(ctx, AddReactionParams{
+		inserted, err = repo.AddReaction(txCtx, AddReactionParams{
 			MessageID: in.MessageID,
 			UserID:    in.UserID,
 			Emoji:     emoji,
@@ -133,7 +144,7 @@ func (s *AddReactionService) Execute(ctx context.Context, in ReactionInput) (Rea
 			return ErrAddReaction(err)
 		}
 
-		reaction, err = summarizeReaction(ctx, repo, in.MessageID, emoji)
+		reaction, err = summarizeReaction(txCtx, repo, in.MessageID, emoji)
 		if err != nil {
 			return ErrAddReaction(err)
 		}
@@ -148,7 +159,7 @@ func (s *AddReactionService) Execute(ctx context.Context, in ReactionInput) (Rea
 	}
 
 	if err := s.publish(ctx, reactionEvent{Type: EventReactionAdded, Input: in, Count: reaction.Count}); err != nil {
-		return ReactionOutput{}, ErrAddReaction(err)
+		logReactionPublishFailure(EventReactionAdded, in, err)
 	}
 
 	return ReactionOutput{Reaction: reaction}, nil
@@ -218,7 +229,7 @@ func (s *RemoveReactionService) Execute(ctx context.Context, in ReactionInput) (
 	}
 
 	if err := s.publish(ctx, reactionEvent{Type: EventReactionRemoved, Input: in, Count: reaction.Count}); err != nil {
-		return ReactionOutput{}, ErrRemoveReaction(err)
+		logReactionPublishFailure(EventReactionRemoved, in, err)
 	}
 
 	return ReactionOutput{Reaction: reaction}, nil

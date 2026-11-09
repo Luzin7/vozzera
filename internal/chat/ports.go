@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
@@ -25,5 +26,10 @@ type RoomAccess interface {
 }
 
 type Transactor interface {
-	WithinTx(ctx context.Context, fn func(Repository) error) error
+	WithinTx(ctx context.Context, limits TxLimits, fn func(Repository) error) error
+}
+
+type TxLimits struct {
+	LockTimeout      time.Duration
+	StatementTimeout time.Duration
 }

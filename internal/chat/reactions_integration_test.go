@@ -3,10 +3,14 @@ package chat
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -76,6 +80,66 @@ func TestAddReactionService_ConcurrentAtCap(t *testing.T) {
 	}
 	if distinct != maxDistinctEmojis {
 		t.Errorf("emojis distintos = %d, want %d", distinct, maxDistinctEmojis)
+	}
+}
+
+func TestAddReactionService_LockTimeout(t *testing.T) {
+	dbURL := os.Getenv("VOZZERA_TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("VOZZERA_TEST_DATABASE_URL não definido; pulando teste de timeout de lock")
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("conectar no banco: %v", err)
+	}
+	defer pool.Close()
+
+	roomID, messageID, userID, err := seedReactionMessage(ctx, pool, 0)
+	if err != nil {
+		t.Fatalf("preparar fixture: %v", err)
+	}
+
+	holder, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("reservar conexão: %v", err)
+	}
+	defer holder.Release()
+
+	held, err := holder.Begin(ctx)
+	if err != nil {
+		t.Fatalf("abrir transação concorrente: %v", err)
+	}
+	defer held.Rollback(ctx)
+
+	if _, err := held.Exec(ctx, `SELECT id FROM messages WHERE id = $1 FOR UPDATE`, messageID); err != nil {
+		t.Fatalf("travar mensagem: %v", err)
+	}
+
+	svc := NewAddReactionService(New(pool), &fakePublisher{}, NewPgTransactor(pool))
+	started := time.Now()
+	_, err = svc.Execute(ctx, ReactionInput{
+		RoomID:    roomID,
+		MessageID: messageID,
+		UserID:    userID,
+		Username:  "alice",
+		Emoji:     "🔥",
+	})
+	elapsed := time.Since(started)
+
+	var httpErr *httpx.Error
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("erro = %v, want erro HTTP nomeado", err)
+	}
+	if httpErr.Status != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", httpErr.Status, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(err.Error(), sqlStateLockNotAvailable) {
+		t.Errorf("erro = %v, want SQLSTATE %s", err, sqlStateLockNotAvailable)
+	}
+	if elapsed > reactionLockTimeout+2*time.Second {
+		t.Errorf("espera = %v, want cerca de %v", elapsed, reactionLockTimeout)
 	}
 }
 

@@ -1,18 +1,22 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -155,11 +159,21 @@ func TestAddReactionService_Execute(t *testing.T) {
 		repo := newFakeRepo()
 		transactor := &fakeTransactor{repo: repo}
 		var order []string
+		transactor.began = func(TxLimits) {
+			order = append(order, "timeouts")
+		}
 
-		repo.lockMessage = func(context.Context, uuid.UUID) (uuid.UUID, error) {
+		repo.lockMessage = func(ctx context.Context, _ uuid.UUID) (uuid.UUID, error) {
 			order = append(order, "lock")
 			if !transactor.inTx {
 				t.Error("lock fora da transação")
+			}
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Error("lock sem deadline no contexto")
+			}
+			if remaining := time.Until(deadline); remaining > reactionStatementTimeout || remaining < reactionStatementTimeout-time.Second {
+				t.Errorf("deadline restante = %v, want ~%v", remaining, reactionStatementTimeout)
 			}
 			return uuid.Nil, nil
 		}
@@ -189,7 +203,7 @@ func TestAddReactionService_Execute(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Execute() erro inesperado: %v", err)
 		}
-		want := []string{"lock", "state", "insert", "summary"}
+		want := []string{"timeouts", "lock", "state", "insert", "summary"}
 		if len(order) != len(want) {
 			t.Fatalf("ordem = %v, want %v", order, want)
 		}
@@ -197,6 +211,9 @@ func TestAddReactionService_Execute(t *testing.T) {
 			if order[i] != want[i] {
 				t.Fatalf("ordem = %v, want %v", order, want)
 			}
+		}
+		if transactor.limits != (TxLimits{LockTimeout: 2 * time.Second, StatementTimeout: 5 * time.Second}) {
+			t.Errorf("limites = %+v, want lock 2s e statement 5s", transactor.limits)
 		}
 		if transactor.runs != 1 {
 			t.Errorf("transações = %d, want 1", transactor.runs)
@@ -207,6 +224,79 @@ func TestAddReactionService_Execute(t *testing.T) {
 		_, err := newTestAddReactionService(noRowsRepo(), &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
 		if !errors.Is(err, ErrMessageNotFound) {
 			t.Errorf("erro = %v, want ErrMessageNotFound", err)
+		}
+	})
+
+	t.Run("timeout de lock vira conflito nomeado", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.lockMessage = func(context.Context, uuid.UUID) (uuid.UUID, error) {
+			return uuid.Nil, &pgconn.PgError{Code: sqlStateLockNotAvailable, Message: "canceling statement due to lock timeout"}
+		}
+
+		_, err := newTestAddReactionService(repo, &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
+
+		var httpErr *httpx.Error
+		if !errors.As(err, &httpErr) {
+			t.Fatalf("erro = %v, want erro HTTP nomeado", err)
+		}
+		if httpErr.Status != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want %d", httpErr.Status, http.StatusServiceUnavailable)
+		}
+		if httpErr.Message != reactionConflictMessage {
+			t.Errorf("mensagem = %q, want %q", httpErr.Message, reactionConflictMessage)
+		}
+	})
+
+	t.Run("statement timeout vira conflito nomeado", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.lockMessage = func(context.Context, uuid.UUID) (uuid.UUID, error) {
+			return uuid.Nil, &pgconn.PgError{Code: sqlStateQueryCanceled, Message: "canceling statement due to statement timeout"}
+		}
+
+		_, err := newTestAddReactionService(repo, &fakePublisher{}).Execute(context.Background(), ReactionInput{Emoji: "🔥"})
+
+		var httpErr *httpx.Error
+		if !errors.As(err, &httpErr) || httpErr.Status != http.StatusServiceUnavailable {
+			t.Fatalf("erro = %v, want status %d", err, http.StatusServiceUnavailable)
+		}
+	})
+
+	t.Run("falha ao publicar mantém o sucesso e loga uma vez", func(t *testing.T) {
+		var buf bytes.Buffer
+		previous := log.Default().Writer()
+		log.SetOutput(&buf)
+		defer log.SetOutput(previous)
+
+		repo := newFakeRepo()
+		messageID := uuid.New()
+		userID := uuid.New()
+		repo.getReactionState = func(context.Context, GetReactionStateParams) (GetReactionStateRow, error) {
+			return GetReactionStateRow{DistinctEmojiCount: 1}, nil
+		}
+		repo.addReaction = func(context.Context, AddReactionParams) (int64, error) {
+			return 1, nil
+		}
+		repo.getReactionsByIDs = func(context.Context, []uuid.UUID) ([]GetReactionsByMessageIDsRow, error) {
+			return []GetReactionsByMessageIDsRow{{MessageID: messageID, Emoji: "🔥", Count: 1, UserIds: []uuid.UUID{userID}}}, nil
+		}
+
+		out, err := newTestAddReactionService(repo, &fakePublisher{err: errors.New("hub indisponível")}).Execute(context.Background(), ReactionInput{
+			RoomID:    uuid.New(),
+			MessageID: messageID,
+			UserID:    userID,
+			Username:  "alice",
+			Emoji:     "🔥",
+		})
+		if err != nil {
+			t.Fatalf("Execute() erro inesperado: %v", err)
+		}
+		if out.Reaction.Count != 1 {
+			t.Errorf("count = %d, want 1", out.Reaction.Count)
+		}
+
+		want := "chat.reaction_publish_failed level=error type=" + EventReactionAdded + " message_id=" + messageID.String() + ` emoji="🔥" user_id=` + userID.String()
+		if strings.Count(buf.String(), want) != 1 {
+			t.Errorf("log = %q, want uma ocorrência de %q", buf.String(), want)
 		}
 	})
 
@@ -490,6 +580,20 @@ func TestHandleAddReaction(t *testing.T) {
 
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("timeout de lock devolve 503", func(t *testing.T) {
+		repo := reactableRepo()
+		repo.lockMessage = func(context.Context, uuid.UUID) (uuid.UUID, error) {
+			return uuid.Nil, &pgconn.PgError{Code: sqlStateLockNotAvailable, Message: "canceling statement due to lock timeout"}
+		}
+
+		w := httptest.NewRecorder()
+		newChatMux(repo, nil).ServeHTTP(w, authenticatedRequest(http.MethodPost, reactionPath(), `{"emoji":"🔥"}`))
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
 		}
 	})
 }

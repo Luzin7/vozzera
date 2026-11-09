@@ -1,9 +1,11 @@
 package chat
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -19,6 +21,25 @@ var (
 	ErrEmojiTooLong        = httpx.Errorf(http.StatusBadRequest, "O emoji deve ter no máximo 10 caracteres")
 	ErrTooManyReactions    = httpx.Errorf(http.StatusBadRequest, "A mensagem já tem o máximo de 20 emojis diferentes")
 )
+
+const (
+	sqlStateLockNotAvailable = "55P03"
+	sqlStateQueryCanceled    = "57014"
+
+	reactionConflictMessage = "A mensagem está em uso por outra operação; tente novamente"
+)
+
+func isReactionContention(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == sqlStateLockNotAvailable || pgErr.Code == sqlStateQueryCanceled
+}
+
+func ErrReactionConflict(err error) error {
+	return httpx.Wrapf(http.StatusServiceUnavailable, reactionConflictMessage, err)
+}
 
 func ErrGetMessages(err error) error {
 	return httpx.Wrapf(http.StatusInternalServerError, "Erro ao buscar mensagens", err)
@@ -37,6 +58,9 @@ func ErrCreateMessage(err error) error {
 }
 
 func ErrAddReaction(err error) error {
+	if isReactionContention(err) {
+		return ErrReactionConflict(err)
+	}
 	return httpx.Wrapf(http.StatusInternalServerError, "Erro interno ao adicionar reação", err)
 }
 
