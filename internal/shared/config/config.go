@@ -15,6 +15,7 @@ var (
 	ErrKeyValueURLRequired               = errors.New("KEY_VALUE_URL é obrigatória")
 	ErrKeyValuePrefixInvalid             = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
 	ErrSessionRevalidateIntervalTooShort = errors.New("WS_SESSION_REVALIDATE_INTERVAL deve ser de pelo menos 1m")
+	ErrSwaggerCredentialsRequired        = errors.New("SWAGGER_BASIC_USER e SWAGGER_BASIC_PASSWORD são obrigatórias quando SWAGGER_ENABLED=true")
 
 	keyValuePrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 )
@@ -43,6 +44,9 @@ type Config struct {
 	PasswordResetTTL          time.Duration
 	AppURL                    string
 	ClientIPHeader            string
+	SwaggerEnabled            bool
+	SwaggerBasicUser          string
+	SwaggerBasicPassword      string
 	SendGridConfig            SendGridConfig
 }
 
@@ -70,6 +74,9 @@ func Load() *Config {
 		PasswordResetTTL:          durationEnv("PASSWORD_RESET_TTL", 30*time.Minute),
 		AppURL:                    os.Getenv("APP_URL"),
 		ClientIPHeader:            strings.TrimSpace(os.Getenv("CLIENT_IP_HEADER")),
+		SwaggerEnabled:            boolEnv("SWAGGER_ENABLED", false),
+		SwaggerBasicUser:          os.Getenv("SWAGGER_BASIC_USER"),
+		SwaggerBasicPassword:      os.Getenv("SWAGGER_BASIC_PASSWORD"),
 		SendGridConfig: SendGridConfig{
 			APIKey:      os.Getenv("SENDGRID_API_KEY"),
 			FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
@@ -91,6 +98,16 @@ func (c *Config) ValidateKeyValue() error {
 func (c *Config) ValidateSessionRevalidateInterval() error {
 	if c.SessionRevalidateInterval < time.Minute {
 		return ErrSessionRevalidateIntervalTooShort
+	}
+	return nil
+}
+
+func (c *Config) ValidateSwagger() error {
+	if !c.SwaggerEnabled {
+		return nil
+	}
+	if c.SwaggerBasicUser == "" || c.SwaggerBasicPassword == "" {
+		return ErrSwaggerCredentialsRequired
 	}
 	return nil
 }
@@ -121,6 +138,18 @@ func intEnv(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func boolEnv(key string, fallback bool) bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return v
 }
 
 func splitList(raw string) []string {

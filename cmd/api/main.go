@@ -36,6 +36,9 @@ func main() {
 	if err := cfg.ValidateSessionRevalidateInterval(); err != nil {
 		log.Fatalf("Configuração de revalidação de sessão inválida: %v", err)
 	}
+	if err := cfg.ValidateSwagger(); err != nil {
+		log.Fatalf("Configuração do Swagger inválida: %v", err)
+	}
 
 	rootCtx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -261,7 +264,11 @@ func main() {
 		State:      voiceState,
 		Publisher:  hub,
 	})
-	swagger.RegisterHandlers(mux)
+	swagger.RegisterHandlers(mux, swagger.HandlerConfig{
+		Enabled:  cfg.SwaggerEnabled,
+		User:     cfg.SwaggerBasicUser,
+		Password: cfg.SwaggerBasicPassword,
+	})
 
 	presence.RegisterHandlers(mux, presence.HandlerDeps{
 		Service: presenceSvc,
