@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestConfig_ValidateKeyValue(t *testing.T) {
@@ -39,5 +40,46 @@ func TestConfig_KeyValueKeyPrefix(t *testing.T) {
 
 	if got := cfg.KeyValueKeyPrefix(); got != "vz:prod" {
 		t.Errorf("KeyValueKeyPrefix() = %q, want vz:prod", got)
+	}
+}
+
+func TestConfig_ValidateSessionRevalidateInterval(t *testing.T) {
+	cases := map[string]struct {
+		interval time.Duration
+		want     error
+	}{
+		"padrão":           {interval: 5 * time.Minute, want: nil},
+		"mínimo":           {interval: time.Minute, want: nil},
+		"abaixo do mínimo": {interval: time.Minute - time.Second, want: ErrSessionRevalidateIntervalTooShort},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := &Config{SessionRevalidateInterval: tc.interval}
+
+			if err := cfg.ValidateSessionRevalidateInterval(); !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestConfig_LoadSessionRevalidateInterval(t *testing.T) {
+	t.Setenv("WS_SESSION_REVALIDATE_INTERVAL", "7m")
+
+	cfg := Load()
+
+	if cfg.SessionRevalidateInterval != 7*time.Minute {
+		t.Errorf("SessionRevalidateInterval = %s, want 7m", cfg.SessionRevalidateInterval)
+	}
+}
+
+func TestConfig_LoadSessionRevalidateIntervalDefault(t *testing.T) {
+	t.Setenv("WS_SESSION_REVALIDATE_INTERVAL", "")
+
+	cfg := Load()
+
+	if cfg.SessionRevalidateInterval != 5*time.Minute {
+		t.Errorf("SessionRevalidateInterval = %s, want 5m", cfg.SessionRevalidateInterval)
 	}
 }

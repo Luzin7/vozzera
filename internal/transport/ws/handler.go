@@ -14,26 +14,29 @@ type SnapshotProvider interface {
 }
 
 type HandlerDeps struct {
-	Registerer        realtime.Registerer
-	Router            *Router
-	SnapshotProviders []SnapshotProvider
-	AllowedOrigins    []string
+	Registerer          realtime.Registerer
+	Router              *Router
+	SnapshotProviders   []SnapshotProvider
+	AllowedOrigins      []string
+	SessionRevalidation realtime.SessionRevalidation
 }
 
 type Handler struct {
-	registerer        realtime.Registerer
-	router            *Router
-	snapshotProviders []SnapshotProvider
-	allowedOrigins    []string
-	upgrader          websocket.Upgrader
+	registerer          realtime.Registerer
+	router              *Router
+	snapshotProviders   []SnapshotProvider
+	allowedOrigins      []string
+	sessionRevalidation realtime.SessionRevalidation
+	upgrader            websocket.Upgrader
 }
 
 func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{
-		registerer:        deps.Registerer,
-		router:            deps.Router,
-		snapshotProviders: deps.SnapshotProviders,
-		allowedOrigins:    deps.AllowedOrigins,
+		registerer:          deps.Registerer,
+		router:              deps.Router,
+		snapshotProviders:   deps.SnapshotProviders,
+		allowedOrigins:      deps.AllowedOrigins,
+		sessionRevalidation: deps.SessionRevalidation,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
@@ -66,6 +69,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.registerer, conn,
 		claims.UserID, claims.Username,
 		claims.SessionID, h.router,
+		realtime.WithSessionRevalidation(h.sessionRevalidation),
 	)
 
 	h.registerer.Register(client)

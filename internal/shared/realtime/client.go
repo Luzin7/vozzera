@@ -11,30 +11,40 @@ import (
 )
 
 const (
-	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
-	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 4096
+	writeWait                = 10 * time.Second
+	pongWait                 = 60 * time.Second
+	pingPeriod               = (pongWait * 9) / 10
+	maxMessageSize           = 4096
+	sessionRevalidateTimeout = 5 * time.Second
 )
 
 type Client struct {
-	registerer Registerer
-	conn       *websocket.Conn
-	send       chan []byte
-	ConnID     uuid.UUID
-	UserID     uuid.UUID
-	Username   string
-	SessionID  uuid.UUID
-	Topics     map[Topic]bool
-	Handler    InboundHandler
-	context    context.Context
-	ctxCancel  context.CancelFunc
-	closeCode  int
+	registerer          Registerer
+	conn                *websocket.Conn
+	send                chan []byte
+	ConnID              uuid.UUID
+	UserID              uuid.UUID
+	Username            string
+	SessionID           uuid.UUID
+	Topics              map[Topic]bool
+	Handler             InboundHandler
+	sessionRevalidation SessionRevalidation
+	context             context.Context
+	ctxCancel           context.CancelFunc
+	closeCode           int
 }
 
-func NewClient(registerer Registerer, conn *websocket.Conn, userID uuid.UUID, username string, sessionID uuid.UUID, handler InboundHandler) *Client {
+type ClientOption func(*Client)
+
+func WithSessionRevalidation(revalidation SessionRevalidation) ClientOption {
+	return func(c *Client) {
+		c.sessionRevalidation = revalidation
+	}
+}
+
+func NewClient(registerer Registerer, conn *websocket.Conn, userID uuid.UUID, username string, sessionID uuid.UUID, handler InboundHandler, opts ...ClientOption) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Client{
+	client := &Client{
 		registerer: registerer,
 		conn:       conn,
 		send:       make(chan []byte, 256),
@@ -47,6 +57,12 @@ func NewClient(registerer Registerer, conn *websocket.Conn, userID uuid.UUID, us
 		context:    ctx,
 		ctxCancel:  cancel,
 	}
+
+	for _, opt := range opts {
+		opt(client)
+	}
+
+	return client
 }
 
 func (c *Client) Context() context.Context {
@@ -95,10 +111,17 @@ func (c *Client) ReadPump() {
 }
 
 func (c *Client) WritePump() {
-	ticker := time.NewTicker(pingPeriod)
+	pingTicker := time.NewTicker(pingPeriod)
 	defer func() {
-		ticker.Stop()
+		pingTicker.Stop()
 		c.conn.Close()
+	}()
+
+	revalidateTicker, revalidate := c.sessionRevalidateTicker()
+	defer func() {
+		if revalidateTicker != nil {
+			revalidateTicker.Stop()
+		}
 	}()
 
 	for {
@@ -119,11 +142,55 @@ func (c *Client) WritePump() {
 			if err := w.Close(); err != nil {
 				return
 			}
-		case <-ticker.C:
+		case <-pingTicker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
+		case <-revalidate:
+			if c.sessionValid() {
+				continue
+			}
+			c.revokeSession()
 		}
+	}
+}
+
+func (c *Client) sessionRevalidateTicker() (*time.Ticker, <-chan time.Time) {
+	if c.sessionRevalidation.Revalidator == nil || c.sessionRevalidation.Interval <= 0 {
+		return nil, nil
+	}
+
+	ticker := time.NewTicker(c.sessionRevalidation.Interval)
+	return ticker, ticker.C
+}
+
+func (c *Client) sessionValid() bool {
+	ctx, cancel := context.WithTimeout(c.context, sessionRevalidateTimeout)
+	defer cancel()
+
+	err := c.sessionRevalidation.Revalidator.RevalidateSession(ctx, c.SessionID)
+	if err == nil {
+		return true
+	}
+	if IsSessionInvalid(err) {
+		return false
+	}
+
+	log.Printf("falha ao revalidar sessão do websocket %s: %v", c.ConnID, err)
+	return true
+}
+
+func (c *Client) revokeSession() {
+	if c.sessionRevalidation.Revoker == nil {
+		log.Printf("websocket %s com sessão inválida sem revogador configurado", c.ConnID)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.context, sessionRevalidateTimeout)
+	defer cancel()
+
+	if err := c.sessionRevalidation.Revoker.Revoke(ctx, c.SessionID); err != nil {
+		log.Printf("falha ao revogar sessão do websocket %s: %v", c.ConnID, err)
 	}
 }

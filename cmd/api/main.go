@@ -33,6 +33,9 @@ func main() {
 	if err := cfg.ValidateKeyValue(); err != nil {
 		log.Fatalf("Configuração do Key Value inválida: %v", err)
 	}
+	if err := cfg.ValidateSessionRevalidateInterval(); err != nil {
+		log.Fatalf("Configuração de revalidação de sessão inválida: %v", err)
+	}
 
 	rootCtx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -125,6 +128,8 @@ func main() {
 	sender := chat.NewSendMessageService(chatQueries, hub)
 	wsRouter := ws.NewRouter()
 
+	sessionAuth := auth.NewSessionAuthenticator(authQueries, cfg.SessionTouchWindow, cfg.SessionTTL)
+
 	wsHandler := ws.NewHandler(ws.HandlerDeps{
 		Registerer: hub,
 		Router:     wsRouter,
@@ -132,6 +137,11 @@ func main() {
 			presenceSvc,
 		},
 		AllowedOrigins: cfg.CORSOrigins,
+		SessionRevalidation: realtime.SessionRevalidation{
+			Revalidator: sessionRevalidator{authenticator: sessionAuth},
+			Revoker:     hub,
+			Interval:    cfg.SessionRevalidateInterval,
+		},
 	})
 	var bgWg sync.WaitGroup
 	bgWg.Add(4)
@@ -165,8 +175,6 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
-
-	sessionAuth := auth.NewSessionAuthenticator(authQueries, cfg.SessionTouchWindow, cfg.SessionTTL)
 
 	authMw := httpx.Auth(func(ctx context.Context, raw string) (httpx.UserClaims, error) {
 		session, err := sessionAuth.AuthenticateSession(ctx, raw)
@@ -350,6 +358,21 @@ func (s *presenceStats) ListUsers(ctx context.Context) ([]realtime.UserPresence,
 		users[i] = realtime.UserPresence{UserID: r.ID, Username: r.Username}
 	}
 	return users, nil
+}
+
+type sessionRevalidator struct {
+	authenticator *auth.SessionAuthenticator
+}
+
+func (r sessionRevalidator) RevalidateSession(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := r.authenticator.AuthenticateSession(ctx, sessionID.String())
+	if err == nil {
+		return nil
+	}
+	if auth.IsSessionInvalid(err) {
+		return realtime.ErrSessionInvalid(err)
+	}
+	return err
 }
 
 func logClientIPSource(header string) {

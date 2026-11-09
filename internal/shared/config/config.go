@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrKeyValueURLRequired   = errors.New("KEY_VALUE_URL é obrigatória")
-	ErrKeyValuePrefixInvalid = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
+	ErrKeyValueURLRequired               = errors.New("KEY_VALUE_URL é obrigatória")
+	ErrKeyValuePrefixInvalid             = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
+	ErrSessionRevalidateIntervalTooShort = errors.New("WS_SESSION_REVALIDATE_INTERVAL deve ser de pelo menos 1m")
 
 	keyValuePrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 )
@@ -27,21 +28,22 @@ type SendGridConfig struct {
 }
 
 type Config struct {
-	DatabaseURL        string
-	InviteCode         string
-	Port               string
-	LiveKitURL         string
-	LiveKitAPIKey      string
-	LiveKitAPISecret   string
-	KeyValueURL        string
-	KeyValuePrefix     string
-	CORSOrigins        []string
-	SessionTTL         time.Duration
-	SessionTouchWindow time.Duration
-	PasswordResetTTL   time.Duration
-	AppURL             string
-	ClientIPHeader     string
-	SendGridConfig     SendGridConfig
+	DatabaseURL               string
+	InviteCode                string
+	Port                      string
+	LiveKitURL                string
+	LiveKitAPIKey             string
+	LiveKitAPISecret          string
+	KeyValueURL               string
+	KeyValuePrefix            string
+	CORSOrigins               []string
+	SessionTTL                time.Duration
+	SessionTouchWindow        time.Duration
+	SessionRevalidateInterval time.Duration
+	PasswordResetTTL          time.Duration
+	AppURL                    string
+	ClientIPHeader            string
+	SendGridConfig            SendGridConfig
 }
 
 func Load() *Config {
@@ -53,20 +55,21 @@ func Load() *Config {
 	}
 
 	return &Config{
-		DatabaseURL:        os.Getenv("DATABASE_URL"),
-		InviteCode:         os.Getenv("INVITE_CODE"),
-		Port:               port,
-		LiveKitURL:         os.Getenv("LIVEKIT_URL"),
-		LiveKitAPIKey:      os.Getenv("LIVEKIT_API_KEY"),
-		LiveKitAPISecret:   os.Getenv("LIVEKIT_API_SECRET"),
-		KeyValueURL:        os.Getenv("KEY_VALUE_URL"),
-		KeyValuePrefix:     os.Getenv("KEY_VALUE_PREFIX"),
-		CORSOrigins:        splitList(os.Getenv("CORS_ORIGINS")),
-		SessionTTL:         durationEnv("SESSION_TTL", 7*24*time.Hour),
-		SessionTouchWindow: durationEnv("SESSION_TOUCH_WINDOW", 24*time.Hour),
-		PasswordResetTTL:   durationEnv("PASSWORD_RESET_TTL", 30*time.Minute),
-		AppURL:             os.Getenv("APP_URL"),
-		ClientIPHeader:     strings.TrimSpace(os.Getenv("CLIENT_IP_HEADER")),
+		DatabaseURL:               os.Getenv("DATABASE_URL"),
+		InviteCode:                os.Getenv("INVITE_CODE"),
+		Port:                      port,
+		LiveKitURL:                os.Getenv("LIVEKIT_URL"),
+		LiveKitAPIKey:             os.Getenv("LIVEKIT_API_KEY"),
+		LiveKitAPISecret:          os.Getenv("LIVEKIT_API_SECRET"),
+		KeyValueURL:               os.Getenv("KEY_VALUE_URL"),
+		KeyValuePrefix:            os.Getenv("KEY_VALUE_PREFIX"),
+		CORSOrigins:               splitList(os.Getenv("CORS_ORIGINS")),
+		SessionTTL:                durationEnv("SESSION_TTL", 7*24*time.Hour),
+		SessionTouchWindow:        durationEnv("SESSION_TOUCH_WINDOW", 24*time.Hour),
+		SessionRevalidateInterval: durationEnv("WS_SESSION_REVALIDATE_INTERVAL", 5*time.Minute),
+		PasswordResetTTL:          durationEnv("PASSWORD_RESET_TTL", 30*time.Minute),
+		AppURL:                    os.Getenv("APP_URL"),
+		ClientIPHeader:            strings.TrimSpace(os.Getenv("CLIENT_IP_HEADER")),
 		SendGridConfig: SendGridConfig{
 			APIKey:      os.Getenv("SENDGRID_API_KEY"),
 			FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
@@ -81,6 +84,13 @@ func (c *Config) ValidateKeyValue() error {
 	}
 	if !keyValuePrefixPattern.MatchString(c.KeyValuePrefix) {
 		return ErrKeyValuePrefixInvalid
+	}
+	return nil
+}
+
+func (c *Config) ValidateSessionRevalidateInterval() error {
+	if c.SessionRevalidateInterval < time.Minute {
+		return ErrSessionRevalidateIntervalTooShort
 	}
 	return nil
 }
