@@ -89,11 +89,12 @@ func TestHydratePresenceService_IgnoraSalasENomesQueNaoSaoUUID(t *testing.T) {
 	}
 }
 
-func TestHydratePresenceService_NaoSobrescreveSalaExistente(t *testing.T) {
+func TestHydratePresenceService_ReconciliaSalaExistente(t *testing.T) {
 	state := newTestState()
 	publisher := &lockedPublisher{}
 	roomID := uuid.New()
-	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-webhook"), at(0))
+	stale := participantOf(uuid.New(), "sid-webhook")
+	mustJoin(t, state, roomID, stale, at(0))
 	lister := &fakeRoomLister{
 		rooms:        []LiveKitRoom{{Name: roomID.String()}},
 		participants: map[string][]Participant{roomID.String(): {participantOf(uuid.New(), "sid-hydrated")}},
@@ -101,8 +102,9 @@ func TestHydratePresenceService_NaoSobrescreveSalaExistente(t *testing.T) {
 
 	newHydrateService(lister, state, publisher).Execute(context.Background())
 
-	if got := mustSnapshot(t, state, roomID).Participants; len(got) != 1 || got[0].SID != "sid-webhook" {
-		t.Errorf("participantes = %+v, want só o do webhook", got)
+	participants := mustSnapshot(t, state, roomID).Participants
+	if len(participants) != 1 || participants[0].SID != "sid-hydrated" {
+		t.Errorf("participantes = %+v, want só o do LiveKit", participants)
 	}
 }
 
@@ -133,14 +135,17 @@ func TestHydratePresenceService_FalhaEmUmaSalaContaComoPuladaEContinua(t *testin
 
 	err := newHydrateService(lister, state, publisher).Execute(context.Background())
 
-	if err != nil {
-		t.Fatalf("Execute erro: %v", err)
+	if err == nil {
+		t.Fatal("Execute deveria devolver o erro da sala")
 	}
 	if len(mustSnapshot(t, state, healthy).Participants) != 1 {
 		t.Error("sala saudável deveria ter sido hidratada")
 	}
 	if !strings.Contains(buf.String(), "rooms=1 participants=1 skipped_rooms=1") {
 		t.Errorf("log = %q, want skipped_rooms=1", buf.String())
+	}
+	if !strings.Contains(buf.String(), "voice.hydrate level=error room_id="+broken.String()) {
+		t.Errorf("log = %q, want a sala com falha", buf.String())
 	}
 }
 

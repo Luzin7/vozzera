@@ -62,14 +62,16 @@ func TestInstanceHeartbeat_WipedLogaEHidrata(t *testing.T) {
 	}
 }
 
-func TestInstanceHeartbeat_SemWipedNaoHidrata(t *testing.T) {
+func TestInstanceHeartbeat_HidrataNaSubidaMesmoSemWiped(t *testing.T) {
 	hydrator := &countingHydrator{}
 	state := &beatingState{results: []beatOutcome{{result: BeatResult{}}}}
+	heartbeat := newHeartbeat(state, hydrator, false)
 
-	newHeartbeat(state, hydrator, false).tick(context.Background())
+	heartbeat.tick(context.Background())
+	heartbeat.tick(context.Background())
 
-	if hydrator.calls.Load() != 0 {
-		t.Errorf("hidratações = %d, want 0", hydrator.calls.Load())
+	if hydrator.calls.Load() != 1 {
+		t.Errorf("hidratações = %d, want 1", hydrator.calls.Load())
 	}
 }
 
@@ -192,28 +194,77 @@ func TestAwaySweeper_ErroNaoParaOLoop(t *testing.T) {
 	}
 }
 
-func TestInstanceHeartbeat_HidratacaoFalhaTentaDeNovoACadaBatidaAteConseguir(t *testing.T) {
+func TestInstanceHeartbeat_HidratacaoFalhaTentaDeNovoComBackoffAteConseguir(t *testing.T) {
+	clock := &fakeClock{now: contractEpoch}
 	hydrator := &countingHydrator{failures: 2}
 	state := &beatingState{results: []beatOutcome{{result: BeatResult{Wiped: true}}, {}}}
 	heartbeat := newHeartbeat(state, hydrator, false)
+	heartbeat.now = clock.Now
 
-	for range 5 {
-		heartbeat.tick(context.Background())
-	}
+	heartbeat.tick(context.Background())
+	clock.Advance(heartbeat.hydrationBackoff)
+	heartbeat.tick(context.Background())
+	clock.Advance(heartbeat.hydrationBackoff)
+	heartbeat.tick(context.Background())
+	heartbeat.tick(context.Background())
 
 	if hydrator.calls.Load() != 3 {
 		t.Errorf("hidratações = %d, want 3 (2 falhas e 1 sucesso, sem repetir depois)", hydrator.calls.Load())
 	}
 }
 
+func TestInstanceHeartbeat_BackoffCresceComAsFalhas(t *testing.T) {
+	buf := captureLog(t)
+	clock := &fakeClock{now: contractEpoch}
+	state := &beatingState{results: []beatOutcome{{}}}
+	heartbeat := newHeartbeat(state, &countingHydrator{failures: 3}, false)
+	heartbeat.now = clock.Now
+
+	heartbeat.tick(context.Background())
+	first := heartbeat.hydrationBackoff
+	clock.Advance(first)
+	heartbeat.tick(context.Background())
+	second := heartbeat.hydrationBackoff
+	clock.Advance(second)
+	heartbeat.tick(context.Background())
+
+	if first != heartbeatInterval || second != 2*heartbeatInterval {
+		t.Errorf("backoff = %v, %v, want %v, %v", first, second, heartbeatInterval, 2*heartbeatInterval)
+	}
+	if got := strings.Count(buf.String(), "voice.hydrate level=error"); got != 3 {
+		t.Errorf("logs de erro = %d, want 3 (um por ciclo); log = %q", got, buf.String())
+	}
+}
+
+func TestInstanceHeartbeat_ReconciliaPeriodicamente(t *testing.T) {
+	clock := &fakeClock{now: contractEpoch}
+	hydrator := &countingHydrator{}
+	state := &beatingState{results: []beatOutcome{{}}}
+	heartbeat := newHeartbeat(state, hydrator, false)
+	heartbeat.now = clock.Now
+
+	heartbeat.tick(context.Background())
+	clock.Advance(presenceReconcileInterval - time.Second)
+	heartbeat.tick(context.Background())
+	clock.Advance(time.Second)
+	heartbeat.tick(context.Background())
+
+	if hydrator.calls.Load() != 2 {
+		t.Errorf("hidratações = %d, want 2 (início e intervalo)", hydrator.calls.Load())
+	}
+}
+
 func TestInstanceHeartbeat_PublicaResyncAposWipedEOutroAoRecuperarAHidratacao(t *testing.T) {
+	clock := &fakeClock{now: contractEpoch}
 	hydrator := &countingHydrator{failures: 1}
 	state := &beatingState{results: []beatOutcome{{result: BeatResult{Wiped: true}}, {}}}
 	heartbeat := newHeartbeat(state, hydrator, false)
+	heartbeat.now = clock.Now
 
-	for range 3 {
-		heartbeat.tick(context.Background())
-	}
+	heartbeat.tick(context.Background())
+	clock.Advance(heartbeat.hydrationBackoff)
+	heartbeat.tick(context.Background())
+	heartbeat.tick(context.Background())
 
 	got := heartbeatPublisher.types()
 	if len(got) != 2 || got[0] != EventAwayResync || got[1] != EventAwayResync {
@@ -221,18 +272,22 @@ func TestInstanceHeartbeat_PublicaResyncAposWipedEOutroAoRecuperarAHidratacao(t 
 	}
 }
 
-func TestInstanceHeartbeat_LogaFalhaDeHidratacaoSoNaTransicaoERecuperacao(t *testing.T) {
+func TestInstanceHeartbeat_LogaFalhaDeHidratacaoACadaCicloERecuperacao(t *testing.T) {
 	buf := captureLog(t)
+	clock := &fakeClock{now: contractEpoch}
 	hydrator := &countingHydrator{failures: 3}
 	state := &beatingState{results: []beatOutcome{{result: BeatResult{Wiped: true}}, {}}}
 	heartbeat := newHeartbeat(state, hydrator, false)
+	heartbeat.now = clock.Now
 
-	for range 5 {
+	for range 3 {
 		heartbeat.tick(context.Background())
+		clock.Advance(heartbeat.hydrationBackoff)
 	}
+	heartbeat.tick(context.Background())
 
-	if got := strings.Count(buf.String(), "voice.hydrate level=error"); got != 1 {
-		t.Errorf("logs de erro = %d, want 1; log = %q", got, buf.String())
+	if got := strings.Count(buf.String(), "voice.hydrate level=error"); got != 3 {
+		t.Errorf("logs de erro = %d, want 3; log = %q", got, buf.String())
 	}
 	if !strings.Contains(buf.String(), "voice.hydrate recovered attempts=4") {
 		t.Errorf("log = %q, want voice.hydrate recovered attempts=4", buf.String())

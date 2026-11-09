@@ -6,6 +6,7 @@ local function open_session(key, ms, mode)
 end
 
 local removed = redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('INCR', KEYS[5])
 
 local active = 0
 for _, raw in ipairs(redis.call('HVALS', KEYS[1])) do

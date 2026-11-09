@@ -49,14 +49,17 @@ type LeaveInput struct {
 }
 
 type RoomHydration struct {
-	RoomID       uuid.UUID
-	Participants []Participant
-	CreatedAt    time.Time
+	RoomID           uuid.UUID
+	Participants     []Participant
+	CreatedAt        time.Time
+	ExpectedRevision int64
 }
 
 type HydrateResult struct {
 	Written          bool
+	Conflict         bool
 	SessionStartedAt *time.Time
+	RemovedAway      []AwayEntry
 }
 
 type JoinResult struct {
@@ -91,6 +94,7 @@ type VoiceRoomState interface {
 	LeaveAway(ctx context.Context, userID uuid.UUID) (*AwayEntry, error)
 	ReleaseAway(ctx context.Context, userID uuid.UUID, owner AwayOwner) (*AwayEntry, error)
 	SweepDeadOwners(ctx context.Context) ([]AwayEntry, error)
+	PresenceRevision(ctx context.Context, roomID uuid.UUID) (int64, error)
 	HydrateRoom(ctx context.Context, in RoomHydration) (HydrateResult, error)
 	Beat(ctx context.Context, instanceID uuid.UUID) (BeatResult, error)
 }
