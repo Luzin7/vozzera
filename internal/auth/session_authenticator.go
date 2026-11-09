@@ -2,9 +2,11 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type SessionAuthenticator struct {
@@ -28,16 +30,19 @@ func NewSessionAuthenticator(repo Repository, touchWindow, ttl time.Duration) *S
 func (a *SessionAuthenticator) AuthenticateSession(ctx context.Context, sessionID string) (UserClaims, error) {
 	sid, err := uuid.Parse(sessionID)
 	if err != nil {
-		return UserClaims{}, ErrInvalidSessionID()
+		return UserClaims{}, ErrSessionInvalid(ErrInvalidSessionID())
 	}
 
 	session, err := a.repo.GetSessionByID(ctx, sid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return UserClaims{}, ErrSessionInvalid(nil)
+	}
 	if err != nil {
 		return UserClaims{}, err
 	}
 
 	if time.Now().After(session.ExpiresAt) {
-		return UserClaims{}, ErrSessionExpired()
+		return UserClaims{}, ErrSessionInvalid(ErrSessionExpired())
 	}
 
 	if time.Until(session.ExpiresAt) < a.touchWindow {

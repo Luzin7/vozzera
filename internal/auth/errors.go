@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
@@ -52,6 +53,29 @@ func ErrCreateSession(err error) error {
 
 func ErrSessionExpired() error {
 	return httpx.Errorf(http.StatusUnauthorized, "Sessão expirada")
+}
+
+type SessionInvalidError struct {
+	Err error
+}
+
+func (e *SessionInvalidError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *SessionInvalidError) Unwrap() error {
+	return e.Err
+}
+
+func ErrSessionInvalid(cause error) error {
+	return &SessionInvalidError{
+		Err: httpx.Wrapf(http.StatusUnauthorized, "Sessão expirada", cause),
+	}
+}
+
+func IsSessionInvalid(err error) bool {
+	var target *SessionInvalidError
+	return errors.As(err, &target)
 }
 
 func ErrTouchSession(err error) error {

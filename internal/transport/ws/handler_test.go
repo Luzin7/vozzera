@@ -71,12 +71,15 @@ func (b subscribeBarrier) OnConnect(*realtime.Client) []realtime.Envelope {
 func connectedSocket(t *testing.T, hub *realtime.Hub, sessionID uuid.UUID) *websocket.Conn {
 	t.Helper()
 	subscribed := make(chan struct{})
-	handler := NewHandler(HandlerDeps{
+	handler, err := NewHandler(HandlerDeps{
 		Registerer:        hub,
 		Router:            NewRouter(),
 		SnapshotProviders: []SnapshotProvider{subscribeBarrier(subscribed)},
 		AllowedOrigins:    []string{testOrigin},
 	})
+	if err != nil {
+		t.Fatalf("NewHandler erro: %v", err)
+	}
 	authenticated := httpx.Auth(func(context.Context, string) (httpx.UserClaims, error) {
 		return httpx.UserClaims{UserID: uuid.New(), Username: "alice", Role: httpx.RoleUser, SessionID: sessionID}, nil
 	})
