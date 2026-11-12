@@ -16,11 +16,19 @@ var (
 	ErrKeyValuePrefixInvalid             = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
 	ErrSessionRevalidateIntervalTooShort = errors.New("WS_SESSION_REVALIDATE_INTERVAL deve ser de pelo menos 1m")
 	ErrSwaggerCredentialsRequired        = errors.New("SWAGGER_BASIC_USER e SWAGGER_BASIC_PASSWORD são obrigatórias quando SWAGGER_ENABLED=true")
+	ErrSendGridAPIKeyRequired            = errors.New("SENDGRID_API_KEY é obrigatória em produção")
+	ErrMailFromAddressRequired           = errors.New("MAIL_FROM_ADDRESS é obrigatória em produção")
+	ErrAppURLRequired                    = errors.New("APP_URL é obrigatória em produção")
+	ErrEnvironmentInvalid                = errors.New("APP_ENV deve ser development ou production")
 
 	keyValuePrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 )
 
-const keyValueNamespace = "vz:"
+const (
+	keyValueNamespace      = "vz:"
+	environmentProduction  = "production"
+	environmentDevelopment = "development"
+)
 
 type SendGridConfig struct {
 	APIKey      string
@@ -29,6 +37,7 @@ type SendGridConfig struct {
 }
 
 type Config struct {
+	Environment               string
 	DatabaseURL               string
 	InviteCode                string
 	Port                      string
@@ -59,6 +68,7 @@ func Load() *Config {
 	}
 
 	return &Config{
+		Environment:               resolveEnvironment(),
 		DatabaseURL:               os.Getenv("DATABASE_URL"),
 		InviteCode:                os.Getenv("INVITE_CODE"),
 		Port:                      port,
@@ -112,8 +122,47 @@ func (c *Config) ValidateSwagger() error {
 	return nil
 }
 
+func (c *Config) ValidateMail() error {
+	if c.SendGridConfig.APIKey == "" {
+		return ErrSendGridAPIKeyRequired
+	}
+	if c.SendGridConfig.FromAddress == "" {
+		return ErrMailFromAddressRequired
+	}
+	if c.AppURL == "" {
+		return ErrAppURLRequired
+	}
+	return nil
+}
+
+func (c *Config) ValidateEnvironment() error {
+	if c.Environment == environmentProduction || c.Environment == environmentDevelopment {
+		return nil
+	}
+	return ErrEnvironmentInvalid
+}
+
+func (c *Config) IsProduction() bool {
+	return c.Environment == environmentProduction
+}
+
 func (c *Config) KeyValueKeyPrefix() string {
 	return keyValueNamespace + c.KeyValuePrefix
+}
+
+func resolveEnvironment() string {
+	if renderSignalsProduction() {
+		return environmentProduction
+	}
+	if env := strings.TrimSpace(os.Getenv("APP_ENV")); env != "" {
+		return env
+	}
+	return environmentDevelopment
+}
+
+func renderSignalsProduction() bool {
+	render := strings.TrimSpace(os.Getenv("RENDER"))
+	return render == "true" || render == "1"
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {
