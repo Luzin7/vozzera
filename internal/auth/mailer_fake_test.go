@@ -1,14 +1,16 @@
 package auth
 
+import "context"
+
 type fakeMailer struct {
-	send func(to, subject, html string) error
+	send func(ctx context.Context, to, subject, html string) error
 }
 
-func (f *fakeMailer) Send(to, subject, html string) error {
+func (f *fakeMailer) Send(ctx context.Context, to, subject, html string) error {
 	if f.send == nil {
 		return nil
 	}
-	return f.send(to, subject, html)
+	return f.send(ctx, to, subject, html)
 }
 
 var _ MailSender = (*fakeMailer)(nil)

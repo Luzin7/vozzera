@@ -50,18 +50,9 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	var mailer auth.MailSender = mailjet.NewNoopMailer()
-	if cfg.MailjetConfigured() {
-		m, err := mailjet.NewMailer(mailjet.Config{
-			APIKey:      cfg.MailjetConfig.APIKey,
-			APISecret:   cfg.MailjetConfig.APISecret,
-			FromAddress: cfg.MailjetConfig.FromAddress,
-			FromName:    cfg.MailjetConfig.FromName,
-		})
-		if err != nil {
-			log.Fatalf("Configuração do Mailjet inválida: %v", err)
-		}
-		mailer = m
+	mailer, emailEnabled, err := buildMailer(cfg)
+	if err != nil {
+		log.Fatalf("Configuração do Mailjet inválida: %v", err)
 	}
 
 	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -180,11 +171,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	mux.HandleFunc("GET /api/health", healthHandler(emailEnabled))
 
 	authMw := httpx.Auth(func(ctx context.Context, raw string) (httpx.UserClaims, error) {
 		session, err := sessionAuth.AuthenticateSession(ctx, raw)
@@ -324,6 +311,47 @@ func main() {
 
 	bgWg.Wait()
 	log.Println("Processo finalizado com sucesso.")
+}
+
+const (
+	emailStatusEnabled  = "enabled"
+	emailStatusDisabled = "disabled"
+)
+
+type healthResponse struct {
+	Status string `json:"status"`
+	Email  string `json:"email"`
+}
+
+func healthHandler(emailEnabled bool) http.HandlerFunc {
+	email := emailStatusDisabled
+	if emailEnabled {
+		email = emailStatusEnabled
+	}
+
+	return func(w http.ResponseWriter, _ *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, healthResponse{Status: "ok", Email: email})
+	}
+}
+
+func buildMailer(cfg *config.Config) (auth.MailSender, bool, error) {
+	if !cfg.MailjetConfigured() {
+		log.Printf("Envio de email DESABILITADO (NoopMailer): MAILJET_API_KEY, MAILJET_API_SECRET e MAIL_FROM_ADDRESS não definidas; emails de redefinição de senha não serão enviados")
+		return mailjet.NewNoopMailer(), false, nil
+	}
+
+	m, err := mailjet.NewMailer(mailjet.Config{
+		APIKey:      cfg.MailjetConfig.APIKey,
+		APISecret:   cfg.MailjetConfig.APISecret,
+		FromAddress: cfg.MailjetConfig.FromAddress,
+		FromName:    cfg.MailjetConfig.FromName,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	log.Printf("Envio de email habilitado via Mailjet (remetente %s)", cfg.MailjetConfig.FromAddress)
+	return m, true, nil
 }
 
 func cleanupExpiredSessions(ctx context.Context, queries *auth.Queries) {

@@ -57,7 +57,7 @@ func (s *RequestPasswordResetService) Execute(ctx context.Context, in RequestPas
 	}
 
 	subject, body := emailtemplates.PasswordReset(s.appURL, token)
-	if err := s.mailer.Send(user.Email, subject, body); err != nil {
+	if err := s.mailer.Send(ctx, user.Email, subject, body); err != nil {
 		log.Printf("falha ao enviar email de redefinição para %s: %v", user.Email, err)
 	}
 

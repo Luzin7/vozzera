@@ -25,7 +25,7 @@ func TestRequestPasswordResetService_Execute_EmailNotFound(t *testing.T) {
 
 	sent := false
 	mailer := &fakeMailer{
-		send: func(to, subject, html string) error {
+		send: func(ctx context.Context, to, subject, html string) error {
 			sent = true
 			return nil
 		},
@@ -57,7 +57,7 @@ func TestRequestPasswordResetService_Execute_Success(t *testing.T) {
 
 	var sentTo, sentSubject, sentBody string
 	mailer := &fakeMailer{
-		send: func(to, subject, html string) error {
+		send: func(ctx context.Context, to, subject, html string) error {
 			sentTo, sentSubject, sentBody = to, subject, html
 			return nil
 		},
@@ -87,11 +87,41 @@ func TestRequestPasswordResetService_Execute_Success(t *testing.T) {
 	}
 }
 
+func TestRequestPasswordResetService_Execute_PropagatesContext(t *testing.T) {
+	repo := newFakeRepo()
+	repo.getUserByEmail = func(ctx context.Context, email string) (GetUserByEmailRow, error) {
+		return GetUserByEmailRow{ID: uuid.New(), Email: "luan@example.com"}, nil
+	}
+	repo.insertPasswordResetToken = func(ctx context.Context, arg InsertPasswordResetTokenParams) (PasswordResetToken, error) {
+		return PasswordResetToken{ID: uuid.New(), UserID: arg.UserID}, nil
+	}
+
+	var received context.Context
+	mailer := &fakeMailer{
+		send: func(ctx context.Context, to, subject, html string) error {
+			received = ctx
+			return nil
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), requestKey{}, "req-123")
+	svc := NewRequestPasswordResetService(repo, mailer, "https://app.vozzera.com", 0)
+
+	if _, err := svc.Execute(ctx, RequestPasswordResetInput{Email: "luan@example.com"}); err != nil {
+		t.Fatalf("Execute() erro inesperado: %v", err)
+	}
+	if received == nil || received.Value(requestKey{}) != "req-123" {
+		t.Error("contexto da requisição não chegou ao MailSender")
+	}
+}
+
+type requestKey struct{}
+
 func TestRequestPasswordResetService_Execute_WithoutAppURL(t *testing.T) {
 	repo := newFakeRepo()
 	sent := false
 	mailer := &fakeMailer{
-		send: func(to, subject, html string) error {
+		send: func(ctx context.Context, to, subject, html string) error {
 			sent = true
 			return nil
 		},

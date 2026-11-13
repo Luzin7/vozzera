@@ -34,5 +34,5 @@ type SessionRevoker interface {
 }
 
 type MailSender interface {
-	Send(to, subject, html string) error
+	Send(ctx context.Context, to, subject, html string) error
 }

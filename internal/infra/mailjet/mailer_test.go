@@ -1,6 +1,7 @@
 package mailjet
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -82,7 +83,7 @@ func TestSendDeliveryPayload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := newTestMailer(t, server).Send("to@example.com", "Assunto", "<p>oi</p>"); err != nil {
+	if err := newTestMailer(t, server).Send(context.Background(), "to@example.com", "Assunto", "<p>oi</p>"); err != nil {
 		t.Fatalf("Send() erro inesperado: %v", err)
 	}
 
@@ -128,7 +129,7 @@ func TestSendMessageRejectedWithHTTP200(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := newTestMailer(t, server).Send("to@example.com", "Assunto", "<p>oi</p>")
+	err := newTestMailer(t, server).Send(context.Background(), "to@example.com", "Assunto", "<p>oi</p>")
 	if !errors.Is(err, ErrMessageRejected) {
 		t.Fatalf("erro = %v, esperava ErrMessageRejected", err)
 	}
@@ -144,7 +145,7 @@ func TestSendMissingMessagesIsError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := newTestMailer(t, server).Send("to@example.com", "Assunto", "<p>oi</p>")
+	err := newTestMailer(t, server).Send(context.Background(), "to@example.com", "Assunto", "<p>oi</p>")
 	if !errors.Is(err, ErrUnexpectedResponse) {
 		t.Fatalf("erro = %v, esperava ErrUnexpectedResponse", err)
 	}
@@ -172,7 +173,7 @@ func TestSendMapsStatusCodes(t *testing.T) {
 			}))
 			defer server.Close()
 
-			err := newTestMailer(t, server).Send("to@example.com", "Assunto", "<p>oi</p>")
+			err := newTestMailer(t, server).Send(context.Background(), "to@example.com", "Assunto", "<p>oi</p>")
 			if !errors.Is(err, tt.expected) {
 				t.Fatalf("erro = %v, esperava %v", err, tt.expected)
 			}
@@ -193,7 +194,7 @@ func TestSendTimesOut(t *testing.T) {
 		t.Fatalf("newMailer() erro inesperado: %v", err)
 	}
 
-	err = m.Send("to@example.com", "Assunto", "<p>oi</p>")
+	err = m.Send(context.Background(), "to@example.com", "Assunto", "<p>oi</p>")
 	if !errors.Is(err, ErrRequestFailed) {
 		t.Fatalf("erro = %v, esperava ErrRequestFailed", err)
 	}
@@ -201,6 +202,70 @@ func TestSendTimesOut(t *testing.T) {
 	var netErr net.Error
 	if !errors.As(err, &netErr) || !netErr.Timeout() {
 		t.Errorf("erro = %v, esperava timeout de rede", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Errorf("timeout do cliente confundido com cancelamento: %v", err)
+	}
+}
+
+func TestSendWithCancelledContextFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"Messages":[{"Status":"success"}]}`)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	assertCancelled(t, newTestMailer(t, server).Send(ctx, "to@example.com", "Assunto", "<p>oi</p>"))
+}
+
+func TestSendStopsWhenContextCancelledMidRequest(t *testing.T) {
+	inFlight := make(chan struct{})
+
+	client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		close(inFlight)
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+
+	m, err := newMailer(testConfig(), client, mailjetAPIURL)
+	if err != nil {
+		t.Fatalf("newMailer() erro inesperado: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- m.Send(ctx, "to@example.com", "Assunto", "<p>oi</p>")
+	}()
+
+	<-inFlight
+	cancel()
+
+	select {
+	case err := <-errCh:
+		assertCancelled(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Send não retornou após o cancelamento do contexto")
+	}
+}
+
+func assertCancelled(t *testing.T, err error) {
+	t.Helper()
+
+	if !errors.Is(err, ErrRequestFailed) {
+		t.Fatalf("erro = %v, esperava ErrRequestFailed", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("erro = %v, esperava context.Canceled", err)
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		t.Errorf("cancelamento reportado como timeout: %v", err)
 	}
 }
 
@@ -239,7 +304,7 @@ func TestSendReadFailurePreservesCause(t *testing.T) {
 		t.Fatalf("newMailer() erro inesperado: %v", err)
 	}
 
-	err = m.Send("to@example.com", "Assunto", "<p>oi</p>")
+	err = m.Send(context.Background(), "to@example.com", "Assunto", "<p>oi</p>")
 	if !errors.Is(err, ErrRequestFailed) {
 		t.Fatalf("erro = %v, esperava ErrRequestFailed", err)
 	}
@@ -254,7 +319,7 @@ func TestSendBuildRequestFailurePreservesCause(t *testing.T) {
 		t.Fatalf("newMailer() erro inesperado: %v", err)
 	}
 
-	err = m.Send("to@example.com", "Assunto", "<p>oi</p>")
+	err = m.Send(context.Background(), "to@example.com", "Assunto", "<p>oi</p>")
 	if !errors.Is(err, ErrRequestFailed) {
 		t.Fatalf("erro = %v, esperava ErrRequestFailed", err)
 	}
@@ -272,7 +337,7 @@ func TestSendInvalidResponsePreservesCause(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := newTestMailer(t, server).Send("to@example.com", "Assunto", "<p>oi</p>")
+	err := newTestMailer(t, server).Send(context.Background(), "to@example.com", "Assunto", "<p>oi</p>")
 	if !errors.Is(err, ErrUnexpectedResponse) {
 		t.Fatalf("erro = %v, esperava ErrUnexpectedResponse", err)
 	}
@@ -290,7 +355,7 @@ func TestDefaultEndpointUsesHTTPS(t *testing.T) {
 }
 
 func TestNoopMailerReportsNotConfigured(t *testing.T) {
-	err := NewNoopMailer().Send("to@example.com", "Assunto", "<p>oi</p>")
+	err := NewNoopMailer().Send(context.Background(), "to@example.com", "Assunto", "<p>oi</p>")
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("erro = %v, esperava ErrNotConfigured", err)
 	}

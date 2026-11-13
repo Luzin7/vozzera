@@ -2,6 +2,7 @@ package mailjet
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -80,8 +81,8 @@ func newMailer(cfg Config, client *http.Client, apiURL string) (*Mailer, error) 
 	}, nil
 }
 
-func (m *Mailer) Send(to, subject, html string) error {
-	req, err := m.buildRequest(to, subject, html)
+func (m *Mailer) Send(ctx context.Context, to, subject, html string) error {
+	req, err := m.buildRequest(ctx, to, subject, html)
 	if err != nil {
 		return err
 	}
@@ -104,7 +105,7 @@ func (m *Mailer) Send(to, subject, html string) error {
 	return parseResult(body)
 }
 
-func (m *Mailer) buildRequest(to, subject, html string) (*http.Request, error) {
+func (m *Mailer) buildRequest(ctx context.Context, to, subject, html string) (*http.Request, error) {
 	payload, err := json.Marshal(sendRequest{
 		Messages: []message{{
 			From:     sender{Email: m.cfg.FromAddress, Name: m.cfg.FromName},
@@ -117,7 +118,7 @@ func (m *Mailer) buildRequest(to, subject, html string) (*http.Request, error) {
 		return nil, fmt.Errorf("%w: serializar email: %w", ErrRequestFailed, err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, m.apiURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.apiURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("%w: montar requisição: %w", ErrRequestFailed, err)
 	}
