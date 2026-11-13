@@ -226,20 +226,64 @@ func TestDispatcherDrainTimeoutLogsUndelivered(t *testing.T) {
 		return nil
 	}}, NewHealth())
 	dispatcher.drainTimeout = 20 * time.Millisecond
-	defer func() {
-		close(release)
-		<-dispatcher.done
-	}()
 
 	_ = dispatcher.Send("to@example.com", "Assunto", "<p>oi</p>")
 	<-started
 	_ = dispatcher.Send("to@example.com", "Assunto", "<p>oi</p>")
 
 	logs := captureLog(t)
-	dispatcher.Close(context.Background())
 
-	if !strings.Contains(logs.String(), "undelivered=2") {
-		t.Errorf("log = %q, want conter undelivered=2", logs.String())
+	closed := make(chan struct{})
+	go func() {
+		dispatcher.Close(context.Background())
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+		t.Fatal("Close() retornou antes do envio em curso terminar")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close() não retornou depois do envio em curso")
+	}
+
+	if !strings.Contains(logs.String(), "undelivered=1") {
+		t.Errorf("log = %q, want conter undelivered=1", logs.String())
+	}
+}
+
+func TestDispatcherCloseWaitsForSendSlowerThanDrainWindow(t *testing.T) {
+	const sendDuration = 100 * time.Millisecond
+
+	var delivered atomic.Int32
+	sendStarted := make(chan struct{})
+
+	dispatcher := NewMailDispatcher(&fakeSender{send: func(string, string, string) error {
+		close(sendStarted)
+		time.Sleep(sendDuration)
+		delivered.Add(1)
+		return nil
+	}}, NewHealth())
+	dispatcher.drainTimeout = 20 * time.Millisecond
+
+	_ = dispatcher.Send("to@example.com", "Assunto", "<p>oi</p>")
+	<-sendStarted
+
+	started := time.Now()
+	dispatcher.Close(context.Background())
+	elapsed := time.Since(started)
+
+	if elapsed < sendDuration {
+		t.Errorf("Close() retornou em %s, antes do envio de %s terminar", elapsed, sendDuration)
+	}
+	if got := delivered.Load(); got != 1 {
+		t.Errorf("entregues = %d, want 1: envio em curso abandonado", got)
 	}
 }
 

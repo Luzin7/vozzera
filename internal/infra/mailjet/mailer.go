@@ -12,7 +12,7 @@ import (
 
 const (
 	mailjetAPIURL   = "https://api.mailjet.com/v3.1/send"
-	clientTimeout   = 15 * time.Second
+	clientTimeout   = 4 * time.Second
 	maxResponseSize = 64 << 10
 	statusSuccess   = "success"
 )
@@ -61,6 +61,7 @@ type messageResult struct {
 
 type resultError struct {
 	ErrorCode    string `json:"ErrorCode"`
+	StatusCode   int    `json:"StatusCode"`
 	ErrorMessage string `json:"ErrorMessage"`
 }
 
@@ -138,11 +139,21 @@ func (m *Mailer) parseResult(body []byte) error {
 
 	for _, msg := range result.Messages {
 		if msg.Status != statusSuccess {
-			return fmt.Errorf("%w: %w", ErrMessageRejected, m.providerError(http.StatusBadRequest, describeErrors(msg.Errors)))
+			return fmt.Errorf("%w: %w", ErrMessageRejected, m.providerError(rejectionStatus(msg.Errors), describeErrors(msg.Errors)))
 		}
 	}
 
 	return nil
+}
+
+func rejectionStatus(errs []resultError) int {
+	for _, e := range errs {
+		if e.StatusCode != 0 {
+			return e.StatusCode
+		}
+	}
+
+	return http.StatusBadRequest
 }
 
 func (m *Mailer) providerError(status int, body string) *ProviderError {

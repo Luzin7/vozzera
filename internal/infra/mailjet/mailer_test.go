@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Luzin7/vozzera-backend/internal/infra/mail"
 )
 
 type sentPayload struct {
@@ -206,6 +209,104 @@ func TestSendTimesOut(t *testing.T) {
 	if errors.Is(err, context.Canceled) {
 		t.Errorf("timeout do cliente confundido com cancelamento: %v", err)
 	}
+}
+
+func TestSendMessageRejectionStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		errorDetail string
+		want        int
+	}{
+		{
+			name:        "status code do provedor",
+			errorDetail: `{"ErrorCode":"send-0003","StatusCode":422,"ErrorMessage":"recipient rejected"}`,
+			want:        http.StatusUnprocessableEntity,
+		},
+		{
+			name:        "status code 400 do provedor",
+			errorDetail: `{"ErrorCode":"send-0003","StatusCode":400,"ErrorMessage":"recipient rejected"}`,
+			want:        http.StatusBadRequest,
+		},
+		{
+			name:        "sem status code cai no padrão",
+			errorDetail: `{"ErrorCode":"send-0003","ErrorMessage":"recipient rejected"}`,
+			want:        http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				io.WriteString(w, `{"Messages":[{"Status":"error","Errors":[`+tt.errorDetail+`]}]}`)
+			}))
+			defer server.Close()
+
+			err := newTestMailer(t, server).Send("to@example.com", "Assunto", "<p>oi</p>")
+			if !errors.Is(err, ErrMessageRejected) {
+				t.Fatalf("erro = %v, esperava ErrMessageRejected", err)
+			}
+
+			var providerErr *ProviderError
+			if !errors.As(err, &providerErr) {
+				t.Fatalf("erro não carrega status do provedor: %v", err)
+			}
+			if providerErr.HTTPStatus() != tt.want {
+				t.Errorf("HTTPStatus() = %d, want %d", providerErr.HTTPStatus(), tt.want)
+			}
+		})
+	}
+}
+
+func TestRejectedMessageProviderStatusReachesDispatcherLog(t *testing.T) {
+	logs := captureMailjetLog(t)
+	dispatcher := mail.NewMailDispatcher(newTestMailer(t, newRejectionServer(t)), mail.NewHealth())
+
+	_ = dispatcher.Send("to@example.com", "Assunto", "<p>oi</p>")
+	dispatcher.Close(context.Background())
+
+	if !strings.Contains(logs.String(), "provider_status=422") {
+		t.Errorf("log = %q, want conter provider_status=422", logs.String())
+	}
+}
+
+func TestRejectedMessageMarksMailHealthFailing(t *testing.T) {
+	health := mail.NewHealth()
+	dispatcher := mail.NewMailDispatcher(newTestMailer(t, newRejectionServer(t)), health)
+
+	_ = dispatcher.Send("to@example.com", "Assunto", "<p>oi</p>")
+	dispatcher.Close(context.Background())
+
+	if status := health.Status(); status != mail.MailStatusFailing {
+		t.Errorf("health = %q, want %q após rejeição do provedor", status, mail.MailStatusFailing)
+	}
+}
+
+func newRejectionServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"Messages":[{"Status":"error","Errors":[{"ErrorCode":"send-0003","StatusCode":422,"ErrorMessage":"recipient rejected"}]}]}`)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestMailjetClientTimeoutFitsDrainBudget(t *testing.T) {
+	if clientTimeout >= mail.DispatcherDrainTimeout {
+		t.Errorf("clientTimeout = %s, want menor que o drain de %s", clientTimeout, mail.DispatcherDrainTimeout)
+	}
+}
+
+func captureMailjetLog(t *testing.T) *strings.Builder {
+	t.Helper()
+
+	var buf strings.Builder
+	previous := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return &buf
 }
 
 func TestNewMailerRejectsIncompleteConfig(t *testing.T) {
