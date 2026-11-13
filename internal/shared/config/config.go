@@ -16,7 +16,8 @@ var (
 	ErrKeyValuePrefixInvalid             = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
 	ErrSessionRevalidateIntervalTooShort = errors.New("WS_SESSION_REVALIDATE_INTERVAL deve ser de pelo menos 1m")
 	ErrSwaggerCredentialsRequired        = errors.New("SWAGGER_BASIC_USER e SWAGGER_BASIC_PASSWORD são obrigatórias quando SWAGGER_ENABLED=true")
-	ErrSendGridAPIKeyRequired            = errors.New("SENDGRID_API_KEY é obrigatória em produção")
+	ErrMailjetAPIKeyRequired             = errors.New("MAILJET_API_KEY é obrigatória em produção")
+	ErrMailjetAPISecretRequired          = errors.New("MAILJET_API_SECRET é obrigatório em produção")
 	ErrMailFromAddressRequired           = errors.New("MAIL_FROM_ADDRESS é obrigatória em produção")
 	ErrAppURLRequired                    = errors.New("APP_URL é obrigatória em produção")
 	ErrEnvironmentInvalid                = errors.New("APP_ENV deve ser development ou production")
@@ -30,8 +31,9 @@ const (
 	environmentDevelopment = "development"
 )
 
-type SendGridConfig struct {
+type MailjetConfig struct {
 	APIKey      string
+	APISecret   string
 	FromAddress string
 	FromName    string
 }
@@ -56,7 +58,7 @@ type Config struct {
 	SwaggerEnabled            bool
 	SwaggerBasicUser          string
 	SwaggerBasicPassword      string
-	SendGridConfig            SendGridConfig
+	MailjetConfig             MailjetConfig
 }
 
 func Load() *Config {
@@ -87,8 +89,9 @@ func Load() *Config {
 		SwaggerEnabled:            boolEnv("SWAGGER_ENABLED", false),
 		SwaggerBasicUser:          os.Getenv("SWAGGER_BASIC_USER"),
 		SwaggerBasicPassword:      os.Getenv("SWAGGER_BASIC_PASSWORD"),
-		SendGridConfig: SendGridConfig{
-			APIKey:      os.Getenv("SENDGRID_API_KEY"),
+		MailjetConfig: MailjetConfig{
+			APIKey:      os.Getenv("MAILJET_API_KEY"),
+			APISecret:   os.Getenv("MAILJET_API_SECRET"),
 			FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
 			FromName:    os.Getenv("MAIL_FROM_NAME"),
 		},
@@ -123,14 +126,17 @@ func (c *Config) ValidateSwagger() error {
 }
 
 func (c *Config) ValidateMail() error {
-	if c.SendGridConfig.APIKey == "" {
-		return ErrSendGridAPIKeyRequired
-	}
-	if c.SendGridConfig.FromAddress == "" {
-		return ErrMailFromAddressRequired
-	}
 	if c.AppURL == "" {
 		return ErrAppURLRequired
+	}
+	if c.MailjetConfig.APIKey == "" {
+		return ErrMailjetAPIKeyRequired
+	}
+	if c.MailjetConfig.APISecret == "" {
+		return ErrMailjetAPISecretRequired
+	}
+	if c.MailjetConfig.FromAddress == "" {
+		return ErrMailFromAddressRequired
 	}
 	return nil
 }

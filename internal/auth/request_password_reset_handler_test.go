@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Luzin7/vozzera-backend/internal/infra/sendgrid"
+	"github.com/Luzin7/vozzera-backend/internal/infra/mail"
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -91,6 +92,18 @@ func TestHandleRequestPasswordReset_SendsMailWithResetLink(t *testing.T) {
 	}
 }
 
+func TestHandleRequestPasswordReset_ProviderFailureStillReturnsOK(t *testing.T) {
+	mailer := &fakeMailer{send: func(string, string, string) error {
+		return errors.New("mailjet respondeu 503")
+	}}
+
+	got := postForgotPassword(t, newForgotPasswordMux(t, forgotPasswordRepo(true), mailer), "luand@example.com")
+
+	if got != http.StatusOK {
+		t.Errorf("status = %d, want 200", got)
+	}
+}
+
 func TestHandleRequestPasswordReset_ReturnsBeforeMailerSend(t *testing.T) {
 	started := make(chan string, 2)
 	release := make(chan struct{})
@@ -104,7 +117,7 @@ func TestHandleRequestPasswordReset_ReturnsBeforeMailerSend(t *testing.T) {
 		<-release
 		return nil
 	}}
-	dispatcher := sendgrid.NewMailDispatcher(mailer, sendgrid.NewHealth())
+	dispatcher := mail.NewMailDispatcher(mailer, mail.NewHealth())
 	defer dispatcher.Close(context.Background())
 	defer releaseWorker()
 

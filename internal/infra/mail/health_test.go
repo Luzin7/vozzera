@@ -1,4 +1,4 @@
-package sendgrid
+package mail
 
 import (
 	"net/http"

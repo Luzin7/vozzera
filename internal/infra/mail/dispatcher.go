@@ -1,4 +1,4 @@
-package sendgrid
+package mail
 
 import (
 	"context"
@@ -11,19 +11,10 @@ import (
 )
 
 const (
-	dispatcherQueueSize    = 64
-	dispatcherDrainTimeout = 5 * time.Second
+	dispatcherQueueSize = 64
+
+	DispatcherDrainTimeout = 5 * time.Second
 )
-
-type MailSender interface {
-	Send(to, subject, html string) error
-}
-
-type mailProviderError interface {
-	error
-	HTTPStatus() int
-	ResponseBody() string
-}
 
 type MailDispatcher struct {
 	sender       MailSender
@@ -32,6 +23,7 @@ type MailDispatcher struct {
 	done         chan struct{}
 	drainTimeout time.Duration
 	pending      atomic.Int64
+	stopped      atomic.Bool
 
 	mu     sync.Mutex
 	closed bool
@@ -49,7 +41,7 @@ func NewMailDispatcher(sender MailSender, health *Health) *MailDispatcher {
 		health:       health,
 		jobs:         make(chan mailJob, dispatcherQueueSize),
 		done:         make(chan struct{}),
-		drainTimeout: dispatcherDrainTimeout,
+		drainTimeout: DispatcherDrainTimeout,
 	}
 	go d.run()
 	return d
@@ -89,8 +81,15 @@ func (d *MailDispatcher) Close(ctx context.Context) {
 
 	select {
 	case <-d.done:
+		return
 	case <-drainCtx.Done():
-		log.Printf("email.dispatch.drain_timeout level=error undelivered=%d timeout=%s", d.pending.Load(), d.drainTimeout)
+	}
+
+	d.stopped.Store(true)
+	<-d.done
+
+	if undelivered := d.pending.Load(); undelivered > 0 {
+		log.Printf("email.dispatch.drain_timeout level=error undelivered=%d timeout=%s", undelivered, d.drainTimeout)
 	}
 }
 
@@ -98,6 +97,9 @@ func (d *MailDispatcher) run() {
 	defer close(d.done)
 
 	for job := range d.jobs {
+		if d.stopped.Load() {
+			continue
+		}
 		d.deliver(job)
 		d.pending.Add(-1)
 	}
@@ -110,7 +112,7 @@ func (d *MailDispatcher) deliver(job mailJob) {
 		return
 	}
 
-	var providerErr mailProviderError
+	var providerErr ProviderError
 	if errors.As(err, &providerErr) {
 		log.Printf("email.dispatch.failed level=error provider_status=%d body=%q", providerErr.HTTPStatus(), providerErr.ResponseBody())
 		d.health.RecordFailure(providerErr.HTTPStatus())

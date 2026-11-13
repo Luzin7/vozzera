@@ -5,28 +5,35 @@ import (
 	"testing"
 )
 
+func validMailConfig() *Config {
+	return &Config{
+		AppURL: "https://app.vozzera.com",
+		MailjetConfig: MailjetConfig{
+			APIKey:      "key",
+			APISecret:   "secret",
+			FromAddress: "no-reply@vozzera.com",
+		},
+	}
+}
+
 func TestConfig_ValidateMail(t *testing.T) {
 	cases := map[string]struct {
-		appURL      string
-		apiKey      string
-		fromAddress string
-		wantErr     error
+		mutate  func(*Config)
+		wantErr error
 	}{
-		"completo":              {appURL: "https://app.vozzera.com", apiKey: "SG.key", fromAddress: "no-reply@vozzera.com"},
-		"sem APP_URL":           {apiKey: "SG.key", fromAddress: "no-reply@vozzera.com", wantErr: ErrAppURLRequired},
-		"sem SENDGRID_API_KEY":  {appURL: "https://app.vozzera.com", fromAddress: "no-reply@vozzera.com", wantErr: ErrSendGridAPIKeyRequired},
-		"sem MAIL_FROM_ADDRESS": {appURL: "https://app.vozzera.com", apiKey: "SG.key", wantErr: ErrMailFromAddressRequired},
-		"sem nada":              {wantErr: ErrSendGridAPIKeyRequired},
+		"completo":               {},
+		"sem APP_URL":            {mutate: func(c *Config) { c.AppURL = "" }, wantErr: ErrAppURLRequired},
+		"sem MAILJET_API_KEY":    {mutate: func(c *Config) { c.MailjetConfig.APIKey = "" }, wantErr: ErrMailjetAPIKeyRequired},
+		"sem MAILJET_API_SECRET": {mutate: func(c *Config) { c.MailjetConfig.APISecret = "" }, wantErr: ErrMailjetAPISecretRequired},
+		"sem MAIL_FROM_ADDRESS":  {mutate: func(c *Config) { c.MailjetConfig.FromAddress = "" }, wantErr: ErrMailFromAddressRequired},
+		"sem nada":               {mutate: func(c *Config) { *c = Config{} }, wantErr: ErrAppURLRequired},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			cfg := &Config{
-				AppURL: tc.appURL,
-				SendGridConfig: SendGridConfig{
-					APIKey:      tc.apiKey,
-					FromAddress: tc.fromAddress,
-				},
+			cfg := validMailConfig()
+			if tc.mutate != nil {
+				tc.mutate(cfg)
 			}
 
 			err := cfg.ValidateMail()
