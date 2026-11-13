@@ -22,8 +22,9 @@ var (
 
 const keyValueNamespace = "vz:"
 
-type SendGridConfig struct {
+type MailjetConfig struct {
 	APIKey      string
+	APISecret   string
 	FromAddress string
 	FromName    string
 }
@@ -47,7 +48,7 @@ type Config struct {
 	SwaggerEnabled            bool
 	SwaggerBasicUser          string
 	SwaggerBasicPassword      string
-	SendGridConfig            SendGridConfig
+	MailjetConfig             MailjetConfig
 }
 
 func Load() *Config {
@@ -77,8 +78,9 @@ func Load() *Config {
 		SwaggerEnabled:            boolEnv("SWAGGER_ENABLED", false),
 		SwaggerBasicUser:          os.Getenv("SWAGGER_BASIC_USER"),
 		SwaggerBasicPassword:      os.Getenv("SWAGGER_BASIC_PASSWORD"),
-		SendGridConfig: SendGridConfig{
-			APIKey:      os.Getenv("SENDGRID_API_KEY"),
+		MailjetConfig: MailjetConfig{
+			APIKey:      os.Getenv("MAILJET_API_KEY"),
+			APISecret:   os.Getenv("MAILJET_API_SECRET"),
 			FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
 			FromName:    os.Getenv("MAIL_FROM_NAME"),
 		},

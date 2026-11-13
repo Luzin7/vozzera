@@ -1,4 +1,4 @@
-package sendgrid
+package mailjet
 
 type NoopMailer struct{}
 

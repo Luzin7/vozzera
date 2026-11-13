@@ -14,7 +14,7 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/auth"
 	"github.com/Luzin7/vozzera-backend/internal/chat"
 	"github.com/Luzin7/vozzera-backend/internal/infra/keyvalue"
-	"github.com/Luzin7/vozzera-backend/internal/infra/sendgrid"
+	"github.com/Luzin7/vozzera-backend/internal/infra/mailjet"
 	"github.com/Luzin7/vozzera-backend/internal/presence"
 	"github.com/Luzin7/vozzera-backend/internal/room"
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
@@ -48,14 +48,15 @@ func main() {
 	defer signal.Stop(sigCh)
 
 	var mailer auth.MailSender
-	m, err := sendgrid.NewSendGridMailer(sendgrid.Config{
-		APIKey:      cfg.SendGridConfig.APIKey,
-		FromAddress: cfg.SendGridConfig.FromAddress,
-		FromName:    cfg.SendGridConfig.FromName,
+	m, err := mailjet.NewMailer(mailjet.Config{
+		APIKey:      cfg.MailjetConfig.APIKey,
+		APISecret:   cfg.MailjetConfig.APISecret,
+		FromAddress: cfg.MailjetConfig.FromAddress,
+		FromName:    cfg.MailjetConfig.FromName,
 	})
 	if err != nil {
 		log.Printf("Envio de email desabilitado: %v", err)
-		mailer = sendgrid.NewNoopMailer()
+		mailer = mailjet.NewNoopMailer()
 	} else {
 		mailer = m
 	}
