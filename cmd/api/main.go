@@ -14,7 +14,8 @@ import (
 	"github.com/Luzin7/vozzera-backend/internal/auth"
 	"github.com/Luzin7/vozzera-backend/internal/chat"
 	"github.com/Luzin7/vozzera-backend/internal/infra/keyvalue"
-	"github.com/Luzin7/vozzera-backend/internal/infra/sendgrid"
+	"github.com/Luzin7/vozzera-backend/internal/infra/mail"
+	"github.com/Luzin7/vozzera-backend/internal/infra/mailjet"
 	"github.com/Luzin7/vozzera-backend/internal/presence"
 	"github.com/Luzin7/vozzera-backend/internal/room"
 	"github.com/Luzin7/vozzera-backend/internal/shared/config"
@@ -30,14 +31,8 @@ import (
 
 func main() {
 	cfg := config.Load()
-	if err := cfg.ValidateKeyValue(); err != nil {
-		log.Fatalf("Configuração do Key Value inválida: %v", err)
-	}
-	if err := cfg.ValidateSessionRevalidateInterval(); err != nil {
-		log.Fatalf("Configuração de revalidação de sessão inválida: %v", err)
-	}
-	if err := cfg.ValidateSwagger(); err != nil {
-		log.Fatalf("Configuração do Swagger inválida: %v", err)
+	if err := validateBootConfig(cfg); err != nil {
+		log.Fatalf("Configuração inválida: %v", err)
 	}
 
 	rootCtx, stop := context.WithCancel(context.Background())
@@ -48,16 +43,24 @@ func main() {
 	defer signal.Stop(sigCh)
 
 	var mailer auth.MailSender
-	m, err := sendgrid.NewSendGridMailer(sendgrid.Config{
-		APIKey:      cfg.SendGridConfig.APIKey,
-		FromAddress: cfg.SendGridConfig.FromAddress,
-		FromName:    cfg.SendGridConfig.FromName,
+	var mailHealth *mail.Health
+	var mailDispatcher *mail.MailDispatcher
+	m, err := mailjet.NewMailer(mailjet.Config{
+		APIKey:      cfg.MailjetConfig.APIKey,
+		APISecret:   cfg.MailjetConfig.APISecret,
+		FromAddress: cfg.MailjetConfig.FromAddress,
+		FromName:    cfg.MailjetConfig.FromName,
 	})
 	if err != nil {
-		log.Printf("Envio de email desabilitado: %v", err)
-		mailer = sendgrid.NewNoopMailer()
+		if cfg.IsProduction() {
+			log.Fatalf("Configuração de email inválida: %v", err)
+		}
+		log.Printf("email.disabled level=error err=%q", err)
+		mailer = mailjet.NewNoopMailer()
 	} else {
-		mailer = m
+		mailHealth = mail.NewHealth()
+		mailDispatcher = mail.NewMailDispatcher(m, mailHealth)
+		mailer = mailDispatcher
 	}
 
 	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -176,11 +179,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	registerHealthHandlers(mux, mailHealth)
 
 	authMw := httpx.Auth(func(ctx context.Context, raw string) (httpx.UserClaims, error) {
 		session, err := sessionAuth.AuthenticateSession(ctx, raw)
@@ -310,6 +309,10 @@ func main() {
 		log.Printf("Erro durante HTTP Server Shutdown: %v", err)
 	}
 
+	if mailDispatcher != nil {
+		mailDispatcher.Close(shutdownCtx)
+	}
+
 	if err := hub.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Erro durante drenagem do Hub de WebSockets: %v", err)
 	}
@@ -320,6 +323,25 @@ func main() {
 
 	bgWg.Wait()
 	log.Println("Processo finalizado com sucesso.")
+}
+
+func validateBootConfig(cfg *config.Config) error {
+	if err := cfg.ValidateEnvironment(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateKeyValue(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateSessionRevalidateInterval(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateSwagger(); err != nil {
+		return err
+	}
+	if !cfg.IsProduction() {
+		return nil
+	}
+	return cfg.ValidateMail()
 }
 
 func cleanupExpiredSessions(ctx context.Context, queries *auth.Queries) {

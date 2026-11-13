@@ -87,8 +87,15 @@ func TestRequestPasswordResetService_Execute_Success(t *testing.T) {
 	}
 }
 
-func TestRequestPasswordResetService_Execute_WithoutAppURL(t *testing.T) {
+func TestRequestPasswordResetService_Execute_WithoutAppURLSendsMail(t *testing.T) {
 	repo := newFakeRepo()
+	repo.getUserByEmail = func(ctx context.Context, email string) (GetUserByEmailRow, error) {
+		return GetUserByEmailRow{ID: uuid.New(), Username: "luand", Email: email}, nil
+	}
+	repo.insertPasswordResetToken = func(ctx context.Context, arg InsertPasswordResetTokenParams) (PasswordResetToken, error) {
+		return PasswordResetToken{ID: uuid.New(), UserID: arg.UserID}, nil
+	}
+
 	sent := false
 	mailer := &fakeMailer{
 		send: func(to, subject, html string) error {
@@ -103,7 +110,7 @@ func TestRequestPasswordResetService_Execute_WithoutAppURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() erro inesperado: %v", err)
 	}
-	if sent {
-		t.Error("email enviado sem APP_URL")
+	if !sent {
+		t.Error("envio suprimido sem APP_URL: boot de produção rejeita APP_URL vazia")
 	}
 }

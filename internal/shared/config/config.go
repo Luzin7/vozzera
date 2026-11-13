@@ -16,19 +16,30 @@ var (
 	ErrKeyValuePrefixInvalid             = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
 	ErrSessionRevalidateIntervalTooShort = errors.New("WS_SESSION_REVALIDATE_INTERVAL deve ser de pelo menos 1m")
 	ErrSwaggerCredentialsRequired        = errors.New("SWAGGER_BASIC_USER e SWAGGER_BASIC_PASSWORD são obrigatórias quando SWAGGER_ENABLED=true")
+	ErrMailjetAPIKeyRequired             = errors.New("MAILJET_API_KEY é obrigatória em produção")
+	ErrMailjetAPISecretRequired          = errors.New("MAILJET_API_SECRET é obrigatório em produção")
+	ErrMailFromAddressRequired           = errors.New("MAIL_FROM_ADDRESS é obrigatória em produção")
+	ErrAppURLRequired                    = errors.New("APP_URL é obrigatória em produção")
+	ErrEnvironmentInvalid                = errors.New("APP_ENV deve ser development ou production")
 
 	keyValuePrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 )
 
-const keyValueNamespace = "vz:"
+const (
+	keyValueNamespace      = "vz:"
+	environmentProduction  = "production"
+	environmentDevelopment = "development"
+)
 
-type SendGridConfig struct {
+type MailjetConfig struct {
 	APIKey      string
+	APISecret   string
 	FromAddress string
 	FromName    string
 }
 
 type Config struct {
+	Environment               string
 	DatabaseURL               string
 	InviteCode                string
 	Port                      string
@@ -47,7 +58,7 @@ type Config struct {
 	SwaggerEnabled            bool
 	SwaggerBasicUser          string
 	SwaggerBasicPassword      string
-	SendGridConfig            SendGridConfig
+	MailjetConfig             MailjetConfig
 }
 
 func Load() *Config {
@@ -59,6 +70,7 @@ func Load() *Config {
 	}
 
 	return &Config{
+		Environment:               resolveEnvironment(),
 		DatabaseURL:               os.Getenv("DATABASE_URL"),
 		InviteCode:                os.Getenv("INVITE_CODE"),
 		Port:                      port,
@@ -77,8 +89,9 @@ func Load() *Config {
 		SwaggerEnabled:            boolEnv("SWAGGER_ENABLED", false),
 		SwaggerBasicUser:          os.Getenv("SWAGGER_BASIC_USER"),
 		SwaggerBasicPassword:      os.Getenv("SWAGGER_BASIC_PASSWORD"),
-		SendGridConfig: SendGridConfig{
-			APIKey:      os.Getenv("SENDGRID_API_KEY"),
+		MailjetConfig: MailjetConfig{
+			APIKey:      os.Getenv("MAILJET_API_KEY"),
+			APISecret:   os.Getenv("MAILJET_API_SECRET"),
 			FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
 			FromName:    os.Getenv("MAIL_FROM_NAME"),
 		},
@@ -112,8 +125,50 @@ func (c *Config) ValidateSwagger() error {
 	return nil
 }
 
+func (c *Config) ValidateMail() error {
+	if c.AppURL == "" {
+		return ErrAppURLRequired
+	}
+	if c.MailjetConfig.APIKey == "" {
+		return ErrMailjetAPIKeyRequired
+	}
+	if c.MailjetConfig.APISecret == "" {
+		return ErrMailjetAPISecretRequired
+	}
+	if c.MailjetConfig.FromAddress == "" {
+		return ErrMailFromAddressRequired
+	}
+	return nil
+}
+
+func (c *Config) ValidateEnvironment() error {
+	if c.Environment == environmentProduction || c.Environment == environmentDevelopment {
+		return nil
+	}
+	return ErrEnvironmentInvalid
+}
+
+func (c *Config) IsProduction() bool {
+	return c.Environment == environmentProduction
+}
+
 func (c *Config) KeyValueKeyPrefix() string {
 	return keyValueNamespace + c.KeyValuePrefix
+}
+
+func resolveEnvironment() string {
+	if renderSignalsProduction() {
+		return environmentProduction
+	}
+	if env := strings.TrimSpace(os.Getenv("APP_ENV")); env != "" {
+		return env
+	}
+	return environmentDevelopment
+}
+
+func renderSignalsProduction() bool {
+	render := strings.TrimSpace(os.Getenv("RENDER"))
+	return render == "true" || render == "1"
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {
