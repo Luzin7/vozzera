@@ -1,4 +1,4 @@
-package sendgrid
+package mail
 
 import (
 	"context"
@@ -14,16 +14,6 @@ const (
 	dispatcherQueueSize    = 64
 	dispatcherDrainTimeout = 5 * time.Second
 )
-
-type MailSender interface {
-	Send(to, subject, html string) error
-}
-
-type mailProviderError interface {
-	error
-	HTTPStatus() int
-	ResponseBody() string
-}
 
 type MailDispatcher struct {
 	sender       MailSender
@@ -110,7 +100,7 @@ func (d *MailDispatcher) deliver(job mailJob) {
 		return
 	}
 
-	var providerErr mailProviderError
+	var providerErr ProviderError
 	if errors.As(err, &providerErr) {
 		log.Printf("email.dispatch.failed level=error provider_status=%d body=%q", providerErr.HTTPStatus(), providerErr.ResponseBody())
 		d.health.RecordFailure(providerErr.HTTPStatus())

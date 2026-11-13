@@ -1,4 +1,4 @@
-package sendgrid
+package mail
 
 import (
 	"net/http"
@@ -54,4 +54,12 @@ func (h *Health) record(status int) {
 
 	h.lastStatus = status
 	h.checkedAt = time.Now()
+}
+
+func isProviderFailure(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
+		return true
+	}
+	return status >= http.StatusInternalServerError
 }

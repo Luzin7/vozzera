@@ -1,7 +1,6 @@
-package sendgrid
+package mail
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log"
@@ -20,6 +19,23 @@ func (f *fakeSender) Send(to, subject, html string) error {
 	return f.send(to, subject, html)
 }
 
+type fakeProviderError struct {
+	status int
+	body   string
+}
+
+func (e *fakeProviderError) Error() string {
+	return "mailjet respondeu erro"
+}
+
+func (e *fakeProviderError) HTTPStatus() int {
+	return e.status
+}
+
+func (e *fakeProviderError) ResponseBody() string {
+	return e.body
+}
+
 func waitForStatus(t *testing.T, health *Health, want string) {
 	t.Helper()
 
@@ -31,16 +47,6 @@ func waitForStatus(t *testing.T, health *Health, want string) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("Status() = %q, want %q", health.Status(), want)
-}
-
-func captureLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-
-	var buf bytes.Buffer
-	previous := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(previous) })
-	return &buf
 }
 
 func TestDispatcherRecordsProviderFailures(t *testing.T) {
@@ -60,7 +66,7 @@ func TestDispatcherRecordsProviderFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			health := NewHealth()
 			dispatcher := NewMailDispatcher(&fakeSender{send: func(string, string, string) error {
-				return NewProviderError(tt.status, "provider failure")
+				return &fakeProviderError{status: tt.status, body: "provider failure"}
 			}}, health)
 			defer dispatcher.Close(context.Background())
 
@@ -88,7 +94,7 @@ func TestDispatcherSuccessClearsFailure(t *testing.T) {
 	health := NewHealth()
 	dispatcher := NewMailDispatcher(&fakeSender{send: func(string, string, string) error {
 		if calls.Add(1) == 1 {
-			return NewProviderError(http.StatusServiceUnavailable, "provider failure")
+			return &fakeProviderError{status: http.StatusServiceUnavailable, body: "provider failure"}
 		}
 		return nil
 	}}, health)
@@ -235,4 +241,31 @@ func TestDispatcherDrainTimeoutLogsUndelivered(t *testing.T) {
 	if !strings.Contains(logs.String(), "undelivered=2") {
 		t.Errorf("log = %q, want conter undelivered=2", logs.String())
 	}
+}
+
+func TestDispatcherLogsProviderErrorAtErrorLevel(t *testing.T) {
+	dispatcher := NewMailDispatcher(&fakeSender{send: func(string, string, string) error {
+		return &fakeProviderError{status: http.StatusUnauthorized, body: "credenciais inválidas"}
+	}}, NewHealth())
+
+	logs := captureLog(t)
+	_ = dispatcher.Send("to@example.com", "Assunto", "<p>oi</p>")
+	dispatcher.Close(context.Background())
+
+	got := logs.String()
+	for _, want := range []string{"email.dispatch.failed", "level=error", "provider_status=401", "credenciais inválidas"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log = %q, want conter %q", got, want)
+		}
+	}
+}
+
+func captureLog(t *testing.T) *strings.Builder {
+	t.Helper()
+
+	var buf strings.Builder
+	previous := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return &buf
 }
