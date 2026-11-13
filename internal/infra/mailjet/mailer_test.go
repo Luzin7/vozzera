@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,16 @@ type sentPayload struct {
 		Subject  string `json:"Subject"`
 		HTMLPart string `json:"HTMLPart"`
 	} `json:"Messages"`
+}
+
+type observedRequest struct {
+	user         string
+	pass         string
+	method       string
+	contentType  string
+	body         sentPayload
+	readErr      error
+	unmarshalErr error
 }
 
 func testConfig() Config {
@@ -47,28 +58,23 @@ func newTestMailer(t *testing.T, server *httptest.Server) *Mailer {
 }
 
 func TestSendDeliveryPayload(t *testing.T) {
-	var (
-		gotUser string
-		gotPass string
-		gotBody sentPayload
-	)
+	requests := make(chan observedRequest, 1)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotUser, gotPass, _ = r.BasicAuth()
+		user, pass, _ := r.BasicAuth()
+		body, readErr := io.ReadAll(r.Body)
 
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("ler body: %v", err)
-		}
-		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("desserializar body: %v", err)
-		}
+		var payload sentPayload
+		unmarshalErr := json.Unmarshal(body, &payload)
 
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, esperava POST", r.Method)
-		}
-		if r.Header.Get("Content-Type") != "application/json" {
-			t.Errorf("Content-Type = %q", r.Header.Get("Content-Type"))
+		requests <- observedRequest{
+			user:         user,
+			pass:         pass,
+			method:       r.Method,
+			contentType:  r.Header.Get("Content-Type"),
+			body:         payload,
+			readErr:      readErr,
+			unmarshalErr: unmarshalErr,
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -80,14 +86,27 @@ func TestSendDeliveryPayload(t *testing.T) {
 		t.Fatalf("Send() erro inesperado: %v", err)
 	}
 
-	if gotUser != "test-key" || gotPass != "test-secret" {
-		t.Errorf("basic auth = %q/%q", gotUser, gotPass)
+	got := <-requests
+	if got.readErr != nil {
+		t.Fatalf("ler body: %v", got.readErr)
 	}
-	if len(gotBody.Messages) != 1 {
-		t.Fatalf("messages = %d, esperava 1", len(gotBody.Messages))
+	if got.unmarshalErr != nil {
+		t.Fatalf("desserializar body: %v", got.unmarshalErr)
+	}
+	if got.method != http.MethodPost {
+		t.Errorf("method = %q, esperava POST", got.method)
+	}
+	if got.contentType != "application/json" {
+		t.Errorf("Content-Type = %q", got.contentType)
+	}
+	if got.user != "test-key" || got.pass != "test-secret" {
+		t.Errorf("basic auth = %q/%q", got.user, got.pass)
+	}
+	if len(got.body.Messages) != 1 {
+		t.Fatalf("messages = %d, esperava 1", len(got.body.Messages))
 	}
 
-	msg := gotBody.Messages[0]
+	msg := got.body.Messages[0]
 	if msg.From.Email != "from@example.com" || msg.From.Name != "Vozzera" {
 		t.Errorf("remetente = %+v", msg.From)
 	}
@@ -205,6 +224,65 @@ func TestNewMailerRejectsIncompleteConfig(t *testing.T) {
 	}
 }
 
+func TestSendReadFailurePreservesCause(t *testing.T) {
+	readErr := errors.New("falha de leitura")
+
+	client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(errorReader{err: readErr}),
+		}, nil
+	})}
+
+	m, err := newMailer(testConfig(), client, "https://api.mailjet.com/v3.1/send")
+	if err != nil {
+		t.Fatalf("newMailer() erro inesperado: %v", err)
+	}
+
+	err = m.Send("to@example.com", "Assunto", "<p>oi</p>")
+	if !errors.Is(err, ErrRequestFailed) {
+		t.Fatalf("erro = %v, esperava ErrRequestFailed", err)
+	}
+	if !errors.Is(err, readErr) {
+		t.Errorf("erro = %v, esperava causa de leitura", err)
+	}
+}
+
+func TestSendBuildRequestFailurePreservesCause(t *testing.T) {
+	m, err := newMailer(testConfig(), http.DefaultClient, "://inválida")
+	if err != nil {
+		t.Fatalf("newMailer() erro inesperado: %v", err)
+	}
+
+	err = m.Send("to@example.com", "Assunto", "<p>oi</p>")
+	if !errors.Is(err, ErrRequestFailed) {
+		t.Fatalf("erro = %v, esperava ErrRequestFailed", err)
+	}
+
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		t.Errorf("erro = %v, esperava *url.Error", err)
+	}
+}
+
+func TestSendInvalidResponsePreservesCause(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{`)
+	}))
+	defer server.Close()
+
+	err := newTestMailer(t, server).Send("to@example.com", "Assunto", "<p>oi</p>")
+	if !errors.Is(err, ErrUnexpectedResponse) {
+		t.Fatalf("erro = %v, esperava ErrUnexpectedResponse", err)
+	}
+
+	var syntaxErr *json.SyntaxError
+	if !errors.As(err, &syntaxErr) {
+		t.Errorf("erro = %v, esperava *json.SyntaxError", err)
+	}
+}
+
 func TestDefaultEndpointUsesHTTPS(t *testing.T) {
 	if !strings.HasPrefix(mailjetAPIURL, "https://api.mailjet.com/") {
 		t.Errorf("endpoint = %q, esperava HTTPS em api.mailjet.com", mailjetAPIURL)
@@ -216,4 +294,18 @@ func TestNoopMailerReportsNotConfigured(t *testing.T) {
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("erro = %v, esperava ErrNotConfigured", err)
 	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }

@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -16,6 +17,7 @@ var (
 	ErrKeyValuePrefixInvalid             = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
 	ErrSessionRevalidateIntervalTooShort = errors.New("WS_SESSION_REVALIDATE_INTERVAL deve ser de pelo menos 1m")
 	ErrSwaggerCredentialsRequired        = errors.New("SWAGGER_BASIC_USER e SWAGGER_BASIC_PASSWORD são obrigatórias quando SWAGGER_ENABLED=true")
+	ErrMailjetIncompleteConfig           = errors.New("configuração do Mailjet incompleta: MAILJET_API_KEY, MAILJET_API_SECRET e MAIL_FROM_ADDRESS devem ser definidas juntas")
 
 	keyValuePrefixPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 )
@@ -114,8 +116,34 @@ func (c *Config) ValidateSwagger() error {
 	return nil
 }
 
+func (c *Config) ValidateMailjet() error {
+	missing := c.MailjetConfig.missingEnv()
+	if len(missing) == 0 || len(missing) == 3 {
+		return nil
+	}
+	return fmt.Errorf("%w: faltando %s", ErrMailjetIncompleteConfig, strings.Join(missing, ", "))
+}
+
+func (c *Config) MailjetConfigured() bool {
+	return c.MailjetConfig.APIKey != "" && c.MailjetConfig.APISecret != "" && c.MailjetConfig.FromAddress != ""
+}
+
 func (c *Config) KeyValueKeyPrefix() string {
 	return keyValueNamespace + c.KeyValuePrefix
+}
+
+func (m MailjetConfig) missingEnv() []string {
+	missing := make([]string, 0, 3)
+	if m.APIKey == "" {
+		missing = append(missing, "MAILJET_API_KEY")
+	}
+	if m.APISecret == "" {
+		missing = append(missing, "MAILJET_API_SECRET")
+	}
+	if m.FromAddress == "" {
+		missing = append(missing, "MAIL_FROM_ADDRESS")
+	}
+	return missing
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {

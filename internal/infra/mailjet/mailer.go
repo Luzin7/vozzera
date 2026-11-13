@@ -94,7 +94,7 @@ func (m *Mailer) Send(to, subject, html string) error {
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
-		return fmt.Errorf("%w: ler resposta: %v", ErrRequestFailed, err)
+		return fmt.Errorf("%w: ler resposta: %w", ErrRequestFailed, err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -114,12 +114,12 @@ func (m *Mailer) buildRequest(to, subject, html string) (*http.Request, error) {
 		}},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: serializar email: %v", ErrRequestFailed, err)
+		return nil, fmt.Errorf("%w: serializar email: %w", ErrRequestFailed, err)
 	}
 
 	req, err := http.NewRequest(http.MethodPost, m.apiURL, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("%w: montar requisição: %v", ErrRequestFailed, err)
+		return nil, fmt.Errorf("%w: montar requisição: %w", ErrRequestFailed, err)
 	}
 	req.SetBasicAuth(m.cfg.APIKey, m.cfg.APISecret)
 	req.Header.Set("Content-Type", "application/json")
@@ -130,7 +130,7 @@ func (m *Mailer) buildRequest(to, subject, html string) (*http.Request, error) {
 func parseResult(body []byte) error {
 	var result sendResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("%w: %v", ErrUnexpectedResponse, err)
+		return fmt.Errorf("%w: %w", ErrUnexpectedResponse, err)
 	}
 	if len(result.Messages) == 0 {
 		return fmt.Errorf("%w: resposta sem Messages", ErrUnexpectedResponse)

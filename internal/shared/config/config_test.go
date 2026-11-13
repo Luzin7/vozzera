@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -62,6 +63,45 @@ func TestConfig_ValidateSwagger(t *testing.T) {
 				t.Errorf("err = %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestConfig_ValidateMailjet(t *testing.T) {
+	cases := map[string]struct {
+		mailjet MailjetConfig
+		want    error
+		missing string
+	}{
+		"nenhuma configuração": {mailjet: MailjetConfig{}, want: nil},
+		"apenas api key":       {mailjet: MailjetConfig{APIKey: "key"}, want: ErrMailjetIncompleteConfig, missing: "MAILJET_API_SECRET"},
+		"sem remetente":        {mailjet: MailjetConfig{APIKey: "key", APISecret: "secret"}, want: ErrMailjetIncompleteConfig, missing: "MAIL_FROM_ADDRESS"},
+		"completa":             {mailjet: MailjetConfig{APIKey: "key", APISecret: "secret", FromAddress: "from@example.com"}, want: nil},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := &Config{MailjetConfig: tc.mailjet}
+
+			err := cfg.ValidateMailjet()
+
+			if !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want %v", err, tc.want)
+			}
+			if tc.missing != "" && !strings.Contains(err.Error(), tc.missing) {
+				t.Errorf("err = %q, esperava citar %s", err, tc.missing)
+			}
+		})
+	}
+}
+
+func TestConfig_MailjetConfigured(t *testing.T) {
+	if (&Config{}).MailjetConfigured() {
+		t.Error("config vazia deveria manter NoopMailer")
+	}
+
+	cfg := &Config{MailjetConfig: MailjetConfig{APIKey: "key", APISecret: "secret", FromAddress: "from@example.com"}}
+	if !cfg.MailjetConfigured() {
+		t.Error("config completa deveria habilitar Mailjet")
 	}
 }
 

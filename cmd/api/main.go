@@ -39,6 +39,9 @@ func main() {
 	if err := cfg.ValidateSwagger(); err != nil {
 		log.Fatalf("Configuração do Swagger inválida: %v", err)
 	}
+	if err := cfg.ValidateMailjet(); err != nil {
+		log.Fatalf("Configuração de email inválida: %v", err)
+	}
 
 	rootCtx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -47,17 +50,17 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	var mailer auth.MailSender
-	m, err := mailjet.NewMailer(mailjet.Config{
-		APIKey:      cfg.MailjetConfig.APIKey,
-		APISecret:   cfg.MailjetConfig.APISecret,
-		FromAddress: cfg.MailjetConfig.FromAddress,
-		FromName:    cfg.MailjetConfig.FromName,
-	})
-	if err != nil {
-		log.Printf("Envio de email desabilitado: %v", err)
-		mailer = mailjet.NewNoopMailer()
-	} else {
+	var mailer auth.MailSender = mailjet.NewNoopMailer()
+	if cfg.MailjetConfigured() {
+		m, err := mailjet.NewMailer(mailjet.Config{
+			APIKey:      cfg.MailjetConfig.APIKey,
+			APISecret:   cfg.MailjetConfig.APISecret,
+			FromAddress: cfg.MailjetConfig.FromAddress,
+			FromName:    cfg.MailjetConfig.FromName,
+		})
+		if err != nil {
+			log.Fatalf("Configuração do Mailjet inválida: %v", err)
+		}
 		mailer = m
 	}
 
