@@ -30,6 +30,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.ValidateEnvironment(); err != nil {
+		log.Fatalf("Configuração de ambiente inválida: %v", err)
+	}
 	if err := cfg.ValidateKeyValue(); err != nil {
 		log.Fatalf("Configuração do Key Value inválida: %v", err)
 	}
@@ -38,6 +41,11 @@ func main() {
 	}
 	if err := cfg.ValidateSwagger(); err != nil {
 		log.Fatalf("Configuração do Swagger inválida: %v", err)
+	}
+	if cfg.IsProduction() {
+		if err := cfg.ValidateMail(); err != nil {
+			log.Fatalf("Configuração de email inválida: %v", err)
+		}
 	}
 
 	rootCtx, stop := context.WithCancel(context.Background())
@@ -48,16 +56,23 @@ func main() {
 	defer signal.Stop(sigCh)
 
 	var mailer auth.MailSender
+	var mailHealth *sendgrid.Health
+	var mailDispatcher *sendgrid.MailDispatcher
 	m, err := sendgrid.NewSendGridMailer(sendgrid.Config{
 		APIKey:      cfg.SendGridConfig.APIKey,
 		FromAddress: cfg.SendGridConfig.FromAddress,
 		FromName:    cfg.SendGridConfig.FromName,
 	})
 	if err != nil {
-		log.Printf("Envio de email desabilitado: %v", err)
+		if cfg.IsProduction() {
+			log.Fatalf("Configuração de email inválida: %v", err)
+		}
+		log.Printf("email.disabled level=error err=%q", err)
 		mailer = sendgrid.NewNoopMailer()
 	} else {
-		mailer = m
+		mailHealth = sendgrid.NewHealth()
+		mailDispatcher = sendgrid.NewMailDispatcher(m, mailHealth)
+		mailer = mailDispatcher
 	}
 
 	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -176,11 +191,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	registerHealthHandlers(mux, mailHealth)
 
 	authMw := httpx.Auth(func(ctx context.Context, raw string) (httpx.UserClaims, error) {
 		session, err := sessionAuth.AuthenticateSession(ctx, raw)
@@ -308,6 +319,10 @@ func main() {
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Erro durante HTTP Server Shutdown: %v", err)
+	}
+
+	if mailDispatcher != nil {
+		mailDispatcher.Close(shutdownCtx)
 	}
 
 	if err := hub.Shutdown(shutdownCtx); err != nil {

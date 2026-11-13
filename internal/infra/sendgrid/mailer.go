@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -88,9 +89,21 @@ func (m *SendGridMailer) Send(to, subject, html string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusAccepted {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("sendgrid respondeu %s: %s", resp.Status, string(body))
+		return m.providerError(resp)
 	}
 
 	return nil
+}
+
+func (m *SendGridMailer) providerError(resp *http.Response) error {
+	body, _ := io.ReadAll(resp.Body)
+
+	return NewProviderError(resp.StatusCode, m.redactSecrets(string(body)))
+}
+
+func (m *SendGridMailer) redactSecrets(body string) string {
+	if m.cfg.APIKey == "" {
+		return body
+	}
+	return strings.ReplaceAll(body, m.cfg.APIKey, redactedValue)
 }

@@ -116,7 +116,7 @@ change plus a redeploy; it is not automatic.
 
 | Symptom | First action | Command / place | Verify |
 | --- | --- | --- | --- |
-| Bad app deploy, schema untouched | Roll back the image | Render → Manual Deploy → `sha-<short>` | `curl -f https://vozzera.onrender.com/api/health`, login, one room |
+| Bad app deploy, schema untouched | Roll back the image | Render → Manual Deploy → `sha-<short>` | `curl -f https://vozzera.onrender.com/api/health` (always 200, even when mail is failing), login, one room |
 | Bad migration, app still running | Stop deploy, dump, revert migration | `goose ... down-to <version>` | `goose status`, `\d <table>` in `psql` |
 | Bad migration plus broken app | Revert migration, then redeploy the matching old image | `goose down-to` + Render image tag | health check, one write path |
 | Data loss within the Neon window | Restore a PITR branch | Neon Console → Branches → Restore | row counts, goose version, app pointed at branch |
@@ -125,12 +125,18 @@ change plus a redeploy; it is not automatic.
 
 ## Verify after each path
 
-1. `curl -fsS https://vozzera.onrender.com/api/health` returns 200.
-2. Log in and read one room's messages (exercises `users`, `rooms`, `messages`).
-3. Write path: send and delete a message in a scratch room.
-4. `goose -dir sql/migrations postgres "$DATABASE_URL" status` shows the expected version and
+1. `curl -fsS https://vozzera.onrender.com/api/health` returns 200. This shallow endpoint is the
+   deploy/rollback gate and the keep-alive target; it always returns 200. Its body reports
+   `"mail": "ok" | "failing" | "unknown" | "disabled"` from the last send outcome (`unknown`
+   means no send in the last hour).
+2. `curl -fsS https://vozzera.onrender.com/api/health/deep` returns 503 when the last send failed
+   or mail is disabled/unconfigured, 200 otherwise. This is the monitoring target for mail, not
+   the Render health check path.
+3. Log in and read one room's messages (exercises `users`, `rooms`, `messages`).
+4. Write path: send and delete a message in a scratch room.
+5. `goose -dir sql/migrations postgres "$DATABASE_URL" status` shows the expected version and
    no `Pending` rows behind an applied newer version.
-5. For a restore, compare `users` and `messages` counts with the incident's expected values.
+6. For a restore, compare `users` and `messages` counts with the incident's expected values.
 
 "Deployed" is not "works": only the checks above close the incident.
 

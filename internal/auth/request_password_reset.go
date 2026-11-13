@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,11 +33,6 @@ func (s *RequestPasswordResetService) Execute(ctx context.Context, in RequestPas
 		return RequestPasswordResetOutput{}, ErrInvalidEmail()
 	}
 
-	if s.appURL == "" {
-		log.Printf("APP_URL não configurado, email de redefinição não enviado")
-		return RequestPasswordResetOutput{}, nil
-	}
-
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RequestPasswordResetOutput{}, nil
@@ -57,9 +51,7 @@ func (s *RequestPasswordResetService) Execute(ctx context.Context, in RequestPas
 	}
 
 	subject, body := emailtemplates.PasswordReset(s.appURL, token)
-	if err := s.mailer.Send(user.Email, subject, body); err != nil {
-		log.Printf("falha ao enviar email de redefinição para %s: %v", user.Email, err)
-	}
+	_ = s.mailer.Send(user.Email, subject, body)
 
 	return RequestPasswordResetOutput{}, nil
 }
