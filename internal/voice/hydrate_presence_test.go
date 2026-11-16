@@ -531,6 +531,44 @@ func (s *finishFailingState) Finish(ctx context.Context, roomID uuid.UUID) ([]Aw
 	return s.VoiceRoomState.Finish(ctx, roomID)
 }
 
+type ctxCheckingState struct {
+	VoiceRoomState
+}
+
+func (s *ctxCheckingState) Finish(ctx context.Context, roomID uuid.UUID) ([]AwayEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.VoiceRoomState.Finish(ctx, roomID)
+}
+
+type delayingPublisher struct {
+	*lockedPublisher
+	delay time.Duration
+}
+
+func (p *delayingPublisher) Publish(ctx context.Context, topic realtime.Topic, env realtime.Envelope) error {
+	if env.Type == realtime.PresenceSnapshot {
+		time.Sleep(p.delay)
+	}
+	return p.lockedPublisher.Publish(ctx, topic, env)
+}
+
+func TestHydratePresenceService_VarreSalaAusenteComContextoProprioNoFinish(t *testing.T) {
+	state := newTestState()
+	roomID := uuid.New()
+	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-ghost"), at(0))
+	checked := &ctxCheckingState{VoiceRoomState: state}
+	publisher := &delayingPublisher{lockedPublisher: &lockedPublisher{}, delay: kvOperationTimeout + 100*time.Millisecond}
+	service := newHydrateService(&fakeRoomLister{}, checked, publisher)
+
+	if err := service.sweepRoom(context.Background(), roomID); err != nil {
+		t.Fatalf("sweepRoom err = %v, want Finish com contexto vivo após publicação lenta", err)
+	}
+
+	assertParticipantSIDs(t, state, roomID)
+}
+
 func TestHydratePresenceService_AnunciaAntesDeApagarSalaAusente(t *testing.T) {
 	for _, harness := range reconcileHarnesses() {
 		t.Run(harness.name, func(t *testing.T) {
@@ -545,8 +583,12 @@ func TestHydratePresenceService_AnunciaAntesDeApagarSalaAusente(t *testing.T) {
 
 			mustHydrate(t, service)
 
+			buf := captureLog(t)
 			if err := service.Execute(context.Background()); err == nil {
 				t.Fatal("Execute deveria devolver o erro do Finish")
+			}
+			if !strings.Contains(buf.String(), "vanished=0 vanished_pending=0 failed=1") {
+				t.Fatalf("log = %q, want falha da varredura contada no resumo", buf.String())
 			}
 			want := []string{EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot}
 			if got := publisher.types(); !reflect.DeepEqual(got, want) {
@@ -557,6 +599,13 @@ func TestHydratePresenceService_AnunciaAntesDeApagarSalaAusente(t *testing.T) {
 			mustHydrate(t, service)
 
 			assertParticipantSIDs(t, state, roomID)
+			repeated := []string{
+				EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot,
+				EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot,
+			}
+			if got := publisher.types(); !reflect.DeepEqual(got, repeated) {
+				t.Fatalf("publicado = %v, want anúncio repetido no ciclo seguinte à falha: %v", got, repeated)
+			}
 		})
 	}
 }

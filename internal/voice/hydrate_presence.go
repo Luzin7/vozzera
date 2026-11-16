@@ -58,6 +58,12 @@ type roomReconcile struct {
 	touchFailed  bool
 }
 
+type vanishedSweep struct {
+	vanished int
+	pending  int
+	failed   int
+}
+
 func (s *HydratePresenceService) Execute(ctx context.Context) error {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
@@ -96,7 +102,10 @@ func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTal
 		return tally, errors.Join(failures, fmt.Errorf("salas com estado: %w", err))
 	}
 
-	tally.vanished, tally.vanishedPending, err = s.sweepVanished(ctx, listed, tracked)
+	sweep, err := s.sweepVanished(ctx, listed, tracked)
+	tally.vanished = sweep.vanished
+	tally.vanishedPending = sweep.pending
+	tally.failed += sweep.failed
 	s.pruneObservations(trackedRooms(listed, tracked))
 	return tally, errors.Join(failures, err)
 }
@@ -157,8 +166,8 @@ func (s *HydratePresenceService) indexRooms(ctx context.Context) {
 	}
 }
 
-func (s *HydratePresenceService) sweepVanished(ctx context.Context, listed map[uuid.UUID]struct{}, tracked []uuid.UUID) (int, int, error) {
-	vanished, pending := 0, 0
+func (s *HydratePresenceService) sweepVanished(ctx context.Context, listed map[uuid.UUID]struct{}, tracked []uuid.UUID) (vanishedSweep, error) {
+	var sweep vanishedSweep
 	var failures []error
 	for _, roomID := range tracked {
 		if _, ok := listed[roomID]; ok {
@@ -167,18 +176,19 @@ func (s *HydratePresenceService) sweepVanished(ctx context.Context, listed map[u
 		delete(s.emptyObservations, roomID)
 		s.vanishedObservations[roomID]++
 		if s.vanishedObservations[roomID] < emptyConfirmationCycles {
-			pending++
+			sweep.pending++
 			continue
 		}
 		if err := s.sweepRoom(ctx, roomID); err != nil {
 			log.Printf("voice.hydrate level=error step=vanished room_id=%s err=%q", roomID, err)
 			failures = append(failures, fmt.Errorf("sala ausente %s: %w", roomID, err))
+			sweep.failed++
 			continue
 		}
 		delete(s.vanishedObservations, roomID)
-		vanished++
+		sweep.vanished++
 	}
-	return vanished, pending, errors.Join(failures...)
+	return sweep, errors.Join(failures...)
 }
 
 func (s *HydratePresenceService) sweepRoom(ctx context.Context, roomID uuid.UUID) error {
@@ -191,7 +201,10 @@ func (s *HydratePresenceService) sweepRoom(ctx context.Context, roomID uuid.UUID
 	}
 	s.announceRemovedAway(ctx, roomID, snapshot.Away, "room_gone")
 	s.announcePresence(ctx, roomID, nil, nil)
-	_, err = s.state.Finish(ctx, roomID)
+
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), kvOperationTimeout)
+	defer finishCancel()
+	_, err = s.state.Finish(finishCtx, roomID)
 	return err
 }
 
