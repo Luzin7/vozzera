@@ -4,7 +4,10 @@ import (
 	"time"
 
 	"github.com/livekit/protocol/auth"
+	"github.com/livekit/protocol/livekit"
 )
+
+const roomEmptyTimeoutSeconds uint32 = 300
 
 type TokenIssuer struct {
 	apiKey    string
@@ -25,6 +28,7 @@ func (ti *TokenIssuer) IssueToken(identity, room, displayName string) (string, e
 		Room:     room,
 	}
 	at.SetVideoGrant(grant).
+		SetRoomConfig(&livekit.RoomConfiguration{EmptyTimeout: roomEmptyTimeoutSeconds}).
 		SetIdentity(identity).
 		SetName(displayName).
 		SetValidFor(6 * time.Hour)
