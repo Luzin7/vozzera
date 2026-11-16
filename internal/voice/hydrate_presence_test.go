@@ -430,7 +430,7 @@ func TestHydratePresenceService_NaoApagaSalaQuandoListRoomsFalha(t *testing.T) {
 			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-present"), at(0))
 			lister := &fakeRoomLister{listRoomsErr: errors.New("livekit fora")}
 			service := newHydrateService(lister, state, &lockedPublisher{})
-			captureLog(t)
+			buf := captureLog(t)
 			sawError := false
 			for range 3 {
 				if err := service.Execute(context.Background()); err != nil {
@@ -438,6 +438,9 @@ func TestHydratePresenceService_NaoApagaSalaQuandoListRoomsFalha(t *testing.T) {
 				}
 			}
 
+			if !strings.Contains(buf.String(), "voice.hydrate level=error rooms=0 participants=0") {
+				t.Fatalf("log = %q, want resumo do ciclo em level=error", buf.String())
+			}
 			assertParticipantSIDs(t, state, roomID, "sid-present")
 			if !sawError {
 				t.Fatal("Execute deveria devolver o erro do ListRooms")
