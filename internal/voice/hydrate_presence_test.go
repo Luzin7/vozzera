@@ -590,6 +590,9 @@ func TestHydratePresenceService_AnunciaAntesDeApagarSalaAusente(t *testing.T) {
 			if !strings.Contains(buf.String(), "vanished=0 vanished_pending=0 failed=1") {
 				t.Fatalf("log = %q, want falha da varredura contada no resumo", buf.String())
 			}
+			if !strings.Contains(buf.String(), "voice.hydrate level=error rooms=0") {
+				t.Fatalf("log = %q, want resumo do ciclo em level=error", buf.String())
+			}
 			want := []string{EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot}
 			if got := publisher.types(); !reflect.DeepEqual(got, want) {
 				t.Fatalf("publicado = %v, want anúncio antes do Finish: %v", got, want)
