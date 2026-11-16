@@ -7,6 +7,7 @@ import (
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/google/uuid"
+	"github.com/livekit/protocol/auth"
 )
 
 type fakeAccess struct {
@@ -62,6 +63,26 @@ func TestTokenService_Execute(t *testing.T) {
 			t.Errorf("room name = %q, want %q", out.RoomName, "voz")
 		}
 	})
+}
+
+func TestTokenIssuer_IssueToken_CarregaDepartureTimeoutExplicito(t *testing.T) {
+	token, err := NewTokenIssuer("key", "secret").IssueToken("user", "sala", "alice")
+	if err != nil {
+		t.Fatalf("IssueToken erro: %v", err)
+	}
+
+	verifier, err := auth.ParseAPIToken(token)
+	if err != nil {
+		t.Fatalf("ParseAPIToken erro: %v", err)
+	}
+	_, claims, err := verifier.Verify("secret")
+	if err != nil {
+		t.Fatalf("Verify erro: %v", err)
+	}
+
+	if got := claims.GetRoomConfiguration().GetDepartureTimeout(); got != 300 {
+		t.Errorf("departure timeout do token = %d, want 300", got)
+	}
 }
 
 func assertStatus(t *testing.T, err error, status int) {
