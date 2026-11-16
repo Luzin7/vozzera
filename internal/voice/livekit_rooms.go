@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	liveKitCallTimeout = time.Second
+	liveKitCallTimeout = 2 * time.Second
 	liveKitTokenTTL    = time.Minute
 )
 
@@ -35,7 +35,11 @@ type LiveKitRoomLister struct {
 var _ RoomLister = (*LiveKitRoomLister)(nil)
 
 func NewLiveKitRoomLister(liveKitURL, apiKey, apiSecret string) *LiveKitRoomLister {
-	return newLiveKitRoomListerWithClient(liveKitHTTPBaseURL(liveKitURL), apiKey, apiSecret, &http.Client{Timeout: liveKitCallTimeout})
+	return newLiveKitRoomListerWithClient(liveKitHTTPBaseURL(liveKitURL), apiKey, apiSecret, newLiveKitHTTPClient())
+}
+
+func newLiveKitHTTPClient() *http.Client {
+	return &http.Client{Timeout: liveKitCallTimeout}
 }
 
 func newLiveKitRoomListerWithClient(baseURL, apiKey, apiSecret string, httpClient *http.Client) *LiveKitRoomLister {

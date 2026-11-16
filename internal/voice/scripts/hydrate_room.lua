@@ -15,7 +15,7 @@ local had_presence = redis.call('EXISTS', KEYS[1])
 local changed = 0
 local removed_away = {}
 
-if #ARGV <= 5 then
+if #ARGV <= 6 then
   if ARGV[4] == '1' then
     return {0, redis.call('GET', KEYS[2]) or '', 0, {}}
   end
@@ -33,16 +33,17 @@ if #ARGV <= 5 then
     table.insert(removed_away, entries[i])
     table.insert(removed_away, entries[i + 1])
   end
+  redis.call('SREM', KEYS[6], ARGV[5])
 else
   local current = redis.call('HGETALL', KEYS[1])
-  if #current / 2 ~= (#ARGV - 5) / 2 then
+  if #current / 2 ~= (#ARGV - 6) / 2 then
     changed = 1
   else
     local fields = {}
     for i = 1, #current, 2 do
       fields[current[i]] = current[i + 1]
     end
-    for i = 6, #ARGV, 2 do
+    for i = 7, #ARGV, 2 do
       if fields[ARGV[i]] ~= ARGV[i + 1] then
         changed = 1
         break
@@ -51,15 +52,17 @@ else
   end
   if changed == 1 then
     redis.call('DEL', KEYS[1])
-    redis.call('HSET', KEYS[1], unpack(ARGV, 6))
+    redis.call('HSET', KEYS[1], unpack(ARGV, 7))
   end
+  redis.call('SADD', KEYS[6], ARGV[5])
+  redis.call('EXPIRE', KEYS[6], ARGV[6])
 end
 
 if changed == 1 then
   redis.call('INCR', KEYS[3])
 end
 
-if had_presence == 0 and #ARGV > 5 then
+if had_presence == 0 and #ARGV > 6 then
   open_session(KEYS[2], ARGV[1], ARGV[2])
 end
 

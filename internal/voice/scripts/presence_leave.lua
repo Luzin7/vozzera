@@ -33,6 +33,10 @@ if active == 0 then
   end
 end
 
+if redis.call('HLEN', KEYS[1]) == 0 then
+  redis.call('SREM', KEYS[6], ARGV[2])
+end
+
 redis.call('EXPIRE', KEYS[1], ARGV[5])
 redis.call('EXPIRE', KEYS[2], ARGV[5])
 redis.call('EXPIRE', KEYS[4], ARGV[5])
