@@ -65,7 +65,7 @@ func TestTokenService_Execute(t *testing.T) {
 	})
 }
 
-func TestTokenIssuer_IssueToken_CarregaEmptyTimeoutExplicito(t *testing.T) {
+func TestTokenIssuer_IssueToken_CarregaDepartureTimeoutExplicito(t *testing.T) {
 	token, err := NewTokenIssuer("key", "secret").IssueToken("user", "sala", "alice")
 	if err != nil {
 		t.Fatalf("IssueToken erro: %v", err)
@@ -80,8 +80,8 @@ func TestTokenIssuer_IssueToken_CarregaEmptyTimeoutExplicito(t *testing.T) {
 		t.Fatalf("Verify erro: %v", err)
 	}
 
-	if got := claims.GetRoomConfiguration().GetEmptyTimeout(); got != 300 {
-		t.Errorf("empty timeout do token = %d, want 300", got)
+	if got := claims.GetRoomConfiguration().GetDepartureTimeout(); got != 300 {
+		t.Errorf("departure timeout do token = %d, want 300", got)
 	}
 }
 
