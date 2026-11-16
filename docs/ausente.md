@@ -39,7 +39,9 @@ Servidor para cliente:
 | `voice.away.ended` | `room:<room_id>` | `{"user_id","reason":"room_empty"\|"returned"\|"connection_closed"}` |
 | `voice.away.resync` | `__presence__` | `{}` |
 | `voice.presence.joined`, `left`, `snapshot` | `room:<room_id>` | formato atual, agora lido do KV |
-| `voice.session.snapshot` | `room:<room_id>` | `{"started_at":"<RFC 3339 ms UTC, sufixo Z>"\|null}`, estado completo; `null` quando a sala não tem ativo. Sai em todo `participant_joined` e `participant_left`, no `room_finished`, na reidratação e no snapshot da inscrição (`null` sem participantes). |
+| `voice.session.snapshot` | `room:<room_id>` | `{"started_at":"<RFC 3339 ms UTC, sufixo Z>"\|null}`, estado completo; `null` quando a sala não tem ativo. Sai em todo `participant_joined` e `participant_left`, no `room_finished`, em todo ciclo de reidratação e no snapshot da inscrição (`null` sem participantes). |
+
+A reidratação republica `voice.presence.snapshot` e `voice.session.snapshot` a cada ciclo, inclusive para sala vazia. Só não publica quando `ListRooms` ou `ListParticipants` falham: erro de observação nunca é anunciado como sala vazia.
 
 Os eventos de ausente vão no tópico da sala porque só inscritos autorizados na sala os recebem. `voice.presence.*` nunca mistura ausentes.
 
@@ -49,9 +51,10 @@ Prefixo `P` = `vz:` + `KEY_VALUE_PREFIX` (em produção, `vz:prod`). Tempos dent
 
 | Chave | Tipo | Campo e valor | TTL |
 |---|---|---|---|
-| `P:room:{room_id}:presence` | hash | `sid` e JSON com `user_id` e `username` | nenhum (limpa no `room_finished`) |
-| `P:room:{room_id}:session` | string | início da sessão em Unix ms (horário de criação da sala no LiveKit; sem ele, o horário do evento, com log `voice.session level=warn cause=missing_room_creation_time`) | nenhum (apagada quando o último ativo sai e no `room_finished`) |
-| `P:room:{room_id}:away` | hash | `user_id` e JSON com `username`, `since`, `conn_id`, `instance_id` | nenhum |
+| `P:room:{room_id}:presence` | hash | `sid` e JSON com `user_id` e `username` | 30 min, renovado a cada ciclo de hidratação e em cada escrita; limpa no `room_finished` |
+| `P:room:{room_id}:session` | string | início da sessão em Unix ms (horário de criação da sala no LiveKit; sem ele, o horário do evento, com log `voice.session level=warn cause=missing_room_creation_time`) | 30 min, renovado a cada ciclo de hidratação e em cada escrita; apagada quando o último ativo sai e no `room_finished` |
+| `P:room:{room_id}:away` | hash | `user_id` e JSON com `username`, `since`, `conn_id`, `instance_id` | 30 min, renovado a cada ciclo de hidratação e em cada escrita |
+| `P:room:{room_id}:presence:rev` | string | revisão de presença, usada para detectar escrita concorrente na reidratação | 30 min, renovado a cada ciclo de hidratação e em cada escrita |
 | `P:away:index` | hash | `user_id` e `room_id` (no máximo uma entrada de ausente por usuário) | nenhum |
 | `P:instance:{instance_id}` | string | `1` | 30 s, renovada a cada 10 s |
 | `P:epoch` | string | id da instância que criou | nenhum; `SET NX` revela uma limpeza do KV |

@@ -33,4 +33,9 @@ if active == 0 then
   end
 end
 
+redis.call('EXPIRE', KEYS[1], ARGV[5])
+redis.call('EXPIRE', KEYS[2], ARGV[5])
+redis.call('EXPIRE', KEYS[4], ARGV[5])
+redis.call('EXPIRE', KEYS[5], ARGV[5])
+
 return {removed, redis.call('HGETALL', KEYS[1]), removed_away, active, redis.call('GET', KEYS[4]) or ''}
