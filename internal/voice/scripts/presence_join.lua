@@ -24,4 +24,8 @@ if away_room then
   end
 end
 
+redis.call('EXPIRE', KEYS[1], ARGV[8])
+redis.call('EXPIRE', KEYS[3], ARGV[8])
+redis.call('EXPIRE', KEYS[4], ARGV[8])
+
 return {redis.call('HGETALL', KEYS[1]), cleared_room, cleared_entry, redis.call('GET', KEYS[3]) or ''}

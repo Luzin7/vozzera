@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	liveKitCallTimeout = 2 * time.Second
+	liveKitCallTimeout = time.Second
 	liveKitTokenTTL    = time.Minute
 )
 

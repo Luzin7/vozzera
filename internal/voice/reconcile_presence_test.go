@@ -186,12 +186,16 @@ func TestHydratePresenceService_ReconciliaPresencaComLiveKit(t *testing.T) {
 				mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-stale"), at(0))
 				lister := listerWithParticipants(roomID)
 				lister.participantErr = map[string]error{roomID.String(): errors.New("timeout")}
+				publisher := &lockedPublisher{}
 				buf := captureLog(t)
 
-				err := newHydrateService(lister, state, &lockedPublisher{}).Execute(context.Background())
+				err := newHydrateService(lister, state, publisher).Execute(context.Background())
 
 				if err == nil {
 					t.Fatal("Execute deveria devolver o erro")
+				}
+				if got := publisher.types(); len(got) != 0 {
+					t.Errorf("publicado = %v, want nada: erro de observação nunca vira sala vazia", got)
 				}
 				assertParticipantSIDs(t, state, roomID, "sid-stale")
 				if !strings.Contains(buf.String(), "voice.hydrate level=error room_id="+roomID.String()) {
@@ -264,8 +268,8 @@ func TestHydratePresenceService_MantemSalaVaziaAteASegundaObservacao(t *testing.
 			if len(snapshot.Participants) != 2 || len(snapshot.Away) != 1 || snapshot.SessionStartedAt == nil {
 				t.Fatalf("snapshot = %+v, want presença, sessão e ausente preservados", snapshot)
 			}
-			if got := publisher.types(); len(got) != 0 {
-				t.Errorf("publicado = %v, want nada na primeira observação", got)
+			if got := publisher.types(); !reflect.DeepEqual(got, []string{realtime.PresenceSnapshot, EventSessionSnapshot}) {
+				t.Errorf("publicado = %v, want o anúncio de sala vazia já na primeira observação", got)
 			}
 			if !strings.Contains(buf.String(), "empty_pending=1") {
 				t.Errorf("log = %q, want empty_pending=1", buf.String())
@@ -316,12 +320,24 @@ func TestHydratePresenceService_ConflitoNaoContaComoObservacaoVazia(t *testing.T
 				VoiceRoomState: base,
 				join:           JoinInput{RoomID: roomID, Participant: participantOf(uuid.New(), "sid-late"), At: at(0)},
 			}
-			service := newHydrateService(listerWithParticipants(roomID), state, &lockedPublisher{})
+			publisher := &lockedPublisher{}
+			service := newHydrateService(listerWithParticipants(roomID), state, publisher)
 
 			if err := service.Execute(context.Background()); err == nil {
 				t.Fatal("Execute deveria sinalizar conflito")
 			}
 			assertParticipantSIDs(t, base, roomID, "sid-present", "sid-late")
+
+			want := []string{realtime.PresenceSnapshot, EventSessionSnapshot}
+			if got := publisher.types(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("publicado = %v, want %v", got, want)
+			}
+			publishedPresence := string(publisher.envelopes[0].Data)
+			for _, sid := range []string{"sid-present", "sid-late"} {
+				if !strings.Contains(publishedPresence, sid) {
+					t.Errorf("presença publicada = %s, want %s sem publicar sala vazia", publishedPresence, sid)
+				}
+			}
 
 			mustHydrate(t, service)
 
@@ -356,21 +372,21 @@ func TestHydratePresenceService_DescartaContagemDeSalaForaDaReconciliacao(t *tes
 func assertAwayEnded(t *testing.T, publisher *lockedPublisher, userID uuid.UUID) {
 	t.Helper()
 
-	want := []string{EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot}
+	want := []string{realtime.PresenceSnapshot, EventSessionSnapshot, EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot}
 	if got := publisher.types(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("publicado = %v, want %v", got, want)
 	}
-	if got := string(publisher.envelopes[0].Data); got != "[]" {
+	if got := string(publisher.envelopes[2].Data); got != "[]" {
 		t.Errorf("away snapshot = %s, want []", got)
 	}
 	var payload awayEndedPayload
-	if err := json.Unmarshal(publisher.envelopes[1].Data, &payload); err != nil {
+	if err := json.Unmarshal(publisher.envelopes[3].Data, &payload); err != nil {
 		t.Fatalf("payload erro: %v", err)
 	}
 	if payload.UserID != userID || payload.Reason != AwayEndedRoomEmpty {
 		t.Errorf("away ended = %+v, want user=%s reason=%s", payload, userID, AwayEndedRoomEmpty)
 	}
-	if got := string(publisher.envelopes[3].Data); got != `{"started_at":null}` {
+	if got := string(publisher.envelopes[5].Data); got != `{"started_at":null}` {
 		t.Errorf("sessão = %s, want started_at nil", got)
 	}
 }
