@@ -471,6 +471,96 @@ func TestHydratePresenceService_AnunciaSalaAusenteSemeadaPorHidratacao(t *testin
 	}
 }
 
+func TestHydratePresenceService_SalaVaziaUmaVezEAusenteUmaVezNaoEVarrida(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-ghost"), at(0))
+			lister := listerWithParticipants(roomID)
+			service := newHydrateService(lister, state, &lockedPublisher{})
+
+			mustHydrate(t, service)
+
+			lister.rooms = nil
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID, "sid-ghost")
+
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID)
+		})
+	}
+}
+
+func TestHydratePresenceService_ObservacaoAusenteNaoConfirmaHidratacaoVazia(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-ghost"), at(0))
+			lister := listerWithParticipants(roomID)
+			service := newHydrateService(lister, state, &lockedPublisher{})
+
+			lister.rooms = nil
+			mustHydrate(t, service)
+
+			lister.rooms = []LiveKitRoom{{Name: roomID.String(), CreatedAt: time.UnixMilli(sessionCreatedMs)}}
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID, "sid-ghost")
+
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID)
+		})
+	}
+}
+
+type finishFailingState struct {
+	VoiceRoomState
+	failures int
+}
+
+func (s *finishFailingState) Finish(ctx context.Context, roomID uuid.UUID) ([]AwayEntry, error) {
+	if s.failures > 0 {
+		s.failures--
+		return nil, errors.New("finish falhou")
+	}
+	return s.VoiceRoomState.Finish(ctx, roomID)
+}
+
+func TestHydratePresenceService_AnunciaAntesDeApagarSalaAusente(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			publisher := &lockedPublisher{}
+			roomID, awayUser := uuid.New(), uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-active"), at(0))
+			mustJoin(t, state, roomID, participantOf(awayUser, "sid-away"), at(0))
+			mustEnterAway(t, state, newAwayEntry(roomID, forUser(awayUser)))
+			failing := &finishFailingState{VoiceRoomState: state, failures: 1}
+			service := newHydrateService(&fakeRoomLister{}, failing, publisher)
+
+			mustHydrate(t, service)
+
+			if err := service.Execute(context.Background()); err == nil {
+				t.Fatal("Execute deveria devolver o erro do Finish")
+			}
+			want := []string{EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot}
+			if got := publisher.types(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("publicado = %v, want anúncio antes do Finish: %v", got, want)
+			}
+			assertParticipantSIDs(t, state, roomID, "sid-active", "sid-away")
+
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID)
+		})
+	}
+}
+
 func TestHydratePresenceService_AnunciaAusenteLimpoAoVarrerSalaAusente(t *testing.T) {
 	for _, harness := range reconcileHarnesses() {
 		t.Run(harness.name, func(t *testing.T) {

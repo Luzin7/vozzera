@@ -20,21 +20,23 @@ const (
 var errPresenceRevisionConflict = errors.New("presença alterada durante a reconciliação")
 
 type HydratePresenceService struct {
-	lister            RoomLister
-	state             VoiceRoomState
-	events            *awayEvents
-	timeout           time.Duration
-	cursor            int
-	emptyObservations map[uuid.UUID]int
+	lister               RoomLister
+	state                VoiceRoomState
+	events               *awayEvents
+	timeout              time.Duration
+	cursor               int
+	emptyObservations    map[uuid.UUID]int
+	vanishedObservations map[uuid.UUID]int
 }
 
 func NewHydratePresenceService(lister RoomLister, state VoiceRoomState, publisher realtime.Publisher) *HydratePresenceService {
 	return &HydratePresenceService{
-		lister:            lister,
-		state:             state,
-		events:            newAwayEvents(state, publisher),
-		timeout:           hydrationTimeout,
-		emptyObservations: make(map[uuid.UUID]int),
+		lister:               lister,
+		state:                state,
+		events:               newAwayEvents(state, publisher),
+		timeout:              hydrationTimeout,
+		emptyObservations:    make(map[uuid.UUID]int),
+		vanishedObservations: make(map[uuid.UUID]int),
 	}
 }
 
@@ -84,15 +86,18 @@ func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTal
 	s.cursor += attempted
 
 	listed := listedRoomIDs(rooms)
+	for roomID := range listed {
+		delete(s.vanishedObservations, roomID)
+	}
 	tracked, err := s.state.RoomsWithState(ctx)
 	if err != nil {
 		log.Printf("voice.hydrate level=error step=rooms_with_state err=%q", err)
-		s.pruneEmptyObservations(listed)
+		s.pruneObservations(listed)
 		return tally, errors.Join(failures, fmt.Errorf("salas com estado: %w", err))
 	}
 
 	tally.vanished, tally.vanishedPending, err = s.sweepVanished(ctx, listed, tracked)
-	s.pruneEmptyObservations(trackedRooms(listed, tracked))
+	s.pruneObservations(trackedRooms(listed, tracked))
 	return tally, errors.Join(failures, err)
 }
 
@@ -159,8 +164,9 @@ func (s *HydratePresenceService) sweepVanished(ctx context.Context, listed map[u
 		if _, ok := listed[roomID]; ok {
 			continue
 		}
-		applyEmpty := s.emptyObservations[roomID]+1 >= emptyConfirmationCycles
-		if s.trackEmptyObservation(roomID, true, applyEmpty) {
+		delete(s.emptyObservations, roomID)
+		s.vanishedObservations[roomID]++
+		if s.vanishedObservations[roomID] < emptyConfirmationCycles {
 			pending++
 			continue
 		}
@@ -169,6 +175,7 @@ func (s *HydratePresenceService) sweepVanished(ctx context.Context, listed map[u
 			failures = append(failures, fmt.Errorf("sala ausente %s: %w", roomID, err))
 			continue
 		}
+		delete(s.vanishedObservations, roomID)
 		vanished++
 	}
 	return vanished, pending, errors.Join(failures...)
@@ -178,13 +185,14 @@ func (s *HydratePresenceService) sweepRoom(ctx context.Context, roomID uuid.UUID
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kvOperationTimeout)
 	defer cancel()
 
-	removed, err := s.state.Finish(ctx, roomID)
+	snapshot, err := s.state.Snapshot(ctx, roomID)
 	if err != nil {
 		return err
 	}
-	s.announceRemovedAway(ctx, roomID, removed, "room_gone")
+	s.announceRemovedAway(ctx, roomID, snapshot.Away, "room_gone")
 	s.announcePresence(ctx, roomID, nil, nil)
-	return nil
+	_, err = s.state.Finish(ctx, roomID)
+	return err
 }
 
 func listedRoomIDs(rooms []LiveKitRoom) map[uuid.UUID]struct{} {
@@ -326,10 +334,12 @@ func (s *HydratePresenceService) rotateRooms(rooms []LiveKitRoom) []LiveKitRoom 
 	return append(ordered, rooms[:offset]...)
 }
 
-func (s *HydratePresenceService) pruneEmptyObservations(seen map[uuid.UUID]struct{}) {
-	for roomID := range s.emptyObservations {
-		if _, ok := seen[roomID]; !ok {
-			delete(s.emptyObservations, roomID)
+func (s *HydratePresenceService) pruneObservations(seen map[uuid.UUID]struct{}) {
+	for _, observations := range []map[uuid.UUID]int{s.emptyObservations, s.vanishedObservations} {
+		for roomID := range observations {
+			if _, ok := seen[roomID]; !ok {
+				delete(observations, roomID)
+			}
 		}
 	}
 }

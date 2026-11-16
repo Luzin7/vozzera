@@ -43,7 +43,7 @@ Servidor para cliente:
 
 A reidratação republica `voice.presence.snapshot` e `voice.session.snapshot` a cada ciclo, inclusive para sala vazia. Só não publica quando `ListRooms` ou `ListParticipants` falham: erro de observação nunca é anunciado como sala vazia.
 
-Sala que ainda tem estado no KV mas não aparece mais no `ListRooms` do LiveKit é confirmada por dois ciclos seguidos e, no segundo, tem presença, sessão e ausentes apagados, o índice atualizado e a sala anunciada vazia: `voice.presence.snapshot` com `[]`, `voice.session.snapshot` com `started_at` nulo e, para cada ausente, `voice.away.ended` com motivo `room_empty` e log `cause=room_gone`. Sala presente na lista nunca é varrida, mesmo quando a leitura dos participantes falha, e erro do `ListRooms` não varre nada.
+Sala que ainda tem estado no KV mas não aparece mais no `ListRooms` do LiveKit é confirmada por dois ciclos seguidos e, no segundo, anuncia a sala vazia — `voice.presence.snapshot` com `[]`, `voice.session.snapshot` com `started_at` nulo e, para cada ausente, `voice.away.ended` com motivo `room_empty` e log `cause=room_gone` — e só então apaga presença, sessão e ausentes e atualiza o índice; se a escrita falhar, o anúncio se repete no ciclo seguinte. Sala presente na lista nunca é varrida, mesmo quando a leitura dos participantes falha, e erro do `ListRooms` não varre nada.
 
 Os eventos de ausente vão no tópico da sala porque só inscritos autorizados na sala os recebem. `voice.presence.*` nunca mistura ausentes.
 
@@ -57,7 +57,9 @@ Prefixo `P` = `vz:` + `KEY_VALUE_PREFIX` (em produção, `vz:prod`). Tempos dent
 | `P:room:{room_id}:session` | string | início da sessão em Unix ms (horário de criação da sala no LiveKit; sem ele, o horário do evento, com log `voice.session level=warn cause=missing_room_creation_time`) | 30 min, renovado a cada ciclo de hidratação e em cada escrita; apagada quando o último ativo sai e no `room_finished` |
 | `P:room:{room_id}:away` | hash | `user_id` e JSON com `username`, `since`, `conn_id`, `instance_id` | 30 min, renovado a cada ciclo de hidratação e em cada escrita |
 | `P:room:{room_id}:presence:rev` | string | revisão de presença, usada para detectar escrita concorrente na reidratação | 30 min, renovado a cada ciclo de hidratação e em cada escrita |
-| `P:rooms` | set | `room_id` das salas com estado no KV, comparado com o `ListRooms` para varrer sala que sumiu do LiveKit | 30 min, renovado a cada ciclo de hidratação e em cada escrita; sai a sala no `room_finished` e quando a última presença da sala sai |
+| `P:rooms` | set | `room_id` das salas com estado no KV, comparado com o `ListRooms` para varrer sala que sumiu do LiveKit | 30 min, renovado no join, na hidratação com escrita e a cada ciclo de hidratação; sai a sala no `room_finished`, na hidratação de sala vazia e quando a última presença da sala sai |
+| `P:rooms:seed` | hash | `cursor` da semeadura do índice a partir de `P:room:*:presence`, enquanto o conjunto não foi varrido por inteiro | 30 min, regravado a cada ciclo incompleto; apagado quando a semeadura conclui |
+| `P:rooms:seeded` | string | `1`, marca que a semeadura de `P:rooms` já varreu todas as presenças | 30 min; expirar volta a semear a partir de `P:room:*:presence` |
 | `P:away:index` | hash | `user_id` e `room_id` (no máximo uma entrada de ausente por usuário) | nenhum |
 | `P:instance:{instance_id}` | string | `1` | 30 s, renovada a cada 10 s |
 | `P:epoch` | string | id da instância que criou | nenhum; `SET NX` revela uma limpeza do KV |
@@ -79,7 +81,7 @@ Toda escrita passa por scripts Lua idempotentes (`internal/voice/scripts/`). O e
 | Liberação ao fechar o WS com erro no KV | 3 tentativas (100, 300 e 900 ms), depois log. O resto é limpo quando o usuário volta, a sala esvazia ou o varredor age. |
 | Snapshot no `room.subscribe` com erro no KV | Nenhum snapshot (nunca `[]`) e log; o cliente mantém o que tem. |
 | KV inalcançável na subida | Log `kv.unreachable_at_startup` e segue (chat e auth não dependem do KV). O heartbeat continua tentando. |
-| Sala some do `ListRooms` sem `room_finished` | Dois ciclos seguidos sem a sala na lista apagam presença, sessão e ausentes e anunciam a sala vazia. O índice `P:rooms` é reconstruído a partir de `P:room:*:presence` quando o conjunto não existe (primeiro boot ou KV zerado). |
+| Sala some do `ListRooms` sem `room_finished` | Dois ciclos seguidos sem a sala na lista anunciam a sala vazia e apagam presença, sessão e ausentes. O índice `P:rooms` é semeado a partir de `P:room:*:presence` em ciclos parciais (cursor em `P:rooms:seed`) até `P:rooms:seeded` marcar a conclusão, no primeiro boot ou depois de o KV zerar. |
 | KV zerado (reinício do plano Free) | O `Beat` detecta pela época; presença é reidratada a partir do LiveKit (se falhar, repete a cada batida até dar certo; só a primeira falha e a recuperação são logadas). O `voice.away.resync` sai logo após a detecção, independente da reidratação, e as abas ausentes reenviam o `enter`. |
 | API morreu sem rodar o hook | Varredor (a cada 30 s) remove entradas de instâncias sem heartbeat. Cada passada examina no máximo 500 entradas do índice (suficiente na escala atual). |
 

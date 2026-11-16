@@ -23,11 +23,16 @@ const (
 	instanceTTL        = 30 * time.Second
 	roomStateTTL       = 30 * time.Minute
 	roomScanBatch      = 500
+	roomSeedBatches    = 50
 )
 
 var errUnexpectedScriptReply = errors.New("resposta inesperada do script do key value")
 
 var errPresenceRevisionInvalid = errors.New("revisão de presença inválida")
+
+var errRoomSeedIncomplete = errors.New("indexação de salas incompleta")
+
+var errRoomSeedCursorInvalid = errors.New("cursor de indexação de salas inválido")
 
 func roomStateTTLSeconds() int64 {
 	return int64(roomStateTTL / time.Second)
@@ -78,15 +83,16 @@ type kvAwayEntry struct {
 }
 
 type kvVoiceRoomState struct {
-	client  *redis.Client
-	prefix  string
-	scripts kvScripts
+	client            *redis.Client
+	prefix            string
+	scripts           kvScripts
+	seedBatchesPerRun int
 }
 
 var _ VoiceRoomState = (*kvVoiceRoomState)(nil)
 
 func NewKVVoiceRoomState(client *redis.Client, keyPrefix string) VoiceRoomState {
-	return &kvVoiceRoomState{client: client, prefix: keyPrefix, scripts: loadScripts()}
+	return &kvVoiceRoomState{client: client, prefix: keyPrefix, scripts: loadScripts(), seedBatchesPerRun: roomSeedBatches}
 }
 
 func (s *kvVoiceRoomState) presenceKey(roomID uuid.UUID) string {
@@ -111,6 +117,14 @@ func (s *kvVoiceRoomState) indexKey() string {
 
 func (s *kvVoiceRoomState) roomsKey() string {
 	return s.prefix + ":rooms"
+}
+
+func (s *kvVoiceRoomState) roomsSeedKey() string {
+	return s.prefix + ":rooms:seed"
+}
+
+func (s *kvVoiceRoomState) roomsSeededKey() string {
+	return s.prefix + ":rooms:seeded"
 }
 
 func (s *kvVoiceRoomState) instanceKey(instanceID uuid.UUID) string {
@@ -399,38 +413,119 @@ func (s *kvVoiceRoomState) RoomsWithState(ctx context.Context) ([]uuid.UUID, err
 		}
 		rooms = append(rooms, roomID)
 	}
-	sort.Slice(rooms, func(i, j int) bool { return rooms[i].String() < rooms[j].String() })
-	return rooms, nil
+	alive, err := s.dropRoomsWithoutState(ctx, rooms)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(alive, func(i, j int) bool { return alive[i].String() < alive[j].String() })
+	return alive, nil
+}
+
+func (s *kvVoiceRoomState) dropRoomsWithoutState(ctx context.Context, rooms []uuid.UUID) ([]uuid.UUID, error) {
+	if len(rooms) == 0 {
+		return rooms, nil
+	}
+
+	pipe := s.client.Pipeline()
+	checks := make([]*redis.IntCmd, len(rooms))
+	for i, roomID := range rooms {
+		checks[i] = pipe.Exists(ctx, s.presenceKey(roomID), s.sessionKey(roomID), s.awayKey(roomID))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+
+	alive := make([]uuid.UUID, 0, len(rooms))
+	var phantoms []any
+	for i, roomID := range rooms {
+		if checks[i].Val() > 0 {
+			alive = append(alive, roomID)
+			continue
+		}
+		phantoms = append(phantoms, roomID.String())
+	}
+	if len(phantoms) == 0 {
+		return alive, nil
+	}
+	pipe = s.client.Pipeline()
+	pipe.SRem(ctx, s.roomsKey(), phantoms...)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	return alive, nil
 }
 
 func (s *kvVoiceRoomState) IndexRoomsFromPresence(ctx context.Context) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, kvOperationTimeout)
 	defer cancel()
 
-	exists, err := s.client.Exists(ctx, s.roomsKey()).Result()
-	if err != nil || exists > 0 {
+	seeded, err := s.client.Exists(ctx, s.roomsSeededKey()).Result()
+	if err != nil || seeded > 0 {
+		return 0, err
+	}
+	cursor, err := s.seedCursor(ctx)
+	if err != nil {
 		return 0, err
 	}
 
-	cursor := uint64(0)
 	indexed := 0
-	for {
+	for range s.seedBatchesPerRun {
 		keys, next, err := s.client.Scan(ctx, cursor, s.prefix+":room:*:presence", roomScanBatch).Result()
 		if err != nil {
-			return indexed, err
+			return indexed, s.saveSeedCursor(ctx, cursor, err)
 		}
 		members := s.roomIDsFromPresenceKeys(keys)
 		if len(members) > 0 {
 			if err := s.addIndexedRooms(ctx, members); err != nil {
-				return indexed, err
+				return indexed, s.saveSeedCursor(ctx, cursor, err)
 			}
 			indexed += len(members)
 		}
 		cursor = next
 		if cursor == 0 {
-			return indexed, nil
+			return indexed, s.finishSeed(ctx)
 		}
 	}
+	return indexed, s.saveSeedCursor(ctx, cursor, errRoomSeedIncomplete)
+}
+
+func (s *kvVoiceRoomState) seedCursor(ctx context.Context) (uint64, error) {
+	raw, err := s.client.HGet(ctx, s.roomsSeedKey(), "cursor").Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	cursor, parseErr := strconv.ParseUint(raw, 10, 64)
+	if parseErr != nil {
+		return 0, errRoomSeedCursorInvalid
+	}
+	return cursor, nil
+}
+
+func (s *kvVoiceRoomState) saveSeedCursor(ctx context.Context, cursor uint64, cause error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kvOperationTimeout)
+	defer cancel()
+
+	pipe := s.client.Pipeline()
+	pipe.HSet(ctx, s.roomsSeedKey(), "cursor", strconv.FormatUint(cursor, 10))
+	pipe.Expire(ctx, s.roomsSeedKey(), roomStateTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return errors.Join(cause, err)
+	}
+	return cause
+}
+
+func (s *kvVoiceRoomState) finishSeed(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kvOperationTimeout)
+	defer cancel()
+
+	pipe := s.client.Pipeline()
+	pipe.Set(ctx, s.roomsSeededKey(), "1", roomStateTTL)
+	pipe.Del(ctx, s.roomsSeedKey())
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (s *kvVoiceRoomState) roomIDsFromPresenceKeys(keys []string) []any {

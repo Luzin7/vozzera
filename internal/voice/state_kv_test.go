@@ -2,8 +2,10 @@ package voice
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,11 +236,161 @@ func TestKVVoiceRoomState_IndexRoomsFromPresenceSeedsRoomsSet(t *testing.T) {
 	if ttl, err := client.TTL(ctx, state.roomsKey()).Result(); err != nil || ttl <= 0 {
 		t.Errorf("ttl rooms = %v, err = %v, want positivo", ttl, err)
 	}
+	if ttl, err := client.TTL(ctx, state.roomsSeededKey()).Result(); err != nil || ttl <= 0 {
+		t.Errorf("ttl seeded = %v, err = %v, want positivo", ttl, err)
+	}
+	if exists, err := client.Exists(ctx, state.roomsSeedKey()).Result(); err != nil || exists != 0 {
+		t.Errorf("marker do cursor = %d, err = %v, want removido na conclusão", exists, err)
+	}
 
 	again, err := state.IndexRoomsFromPresence(ctx)
 
 	if err != nil || again != 0 {
-		t.Fatalf("segunda chamada = %d, err = %v, want 0 com o índice já existente", again, err)
+		t.Fatalf("segunda chamada = %d, err = %v, want 0 com o índice já semeado", again, err)
+	}
+}
+
+func TestKVVoiceRoomState_IndexRoomsFromPresenceNaoRepeteDepoisDeSemeado(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix := "vz:test-" + uuid.NewString()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+
+	ctx := context.Background()
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	seeded := uuid.New()
+	if err := client.HSet(ctx, state.presenceKey(seeded), "sid-a", `{"user_id":"`+uuid.NewString()+`","username":"alice"}`).Err(); err != nil {
+		t.Fatalf("HSet erro: %v", err)
+	}
+	if _, err := state.IndexRoomsFromPresence(ctx); err != nil {
+		t.Fatalf("IndexRoomsFromPresence erro: %v", err)
+	}
+	if err := client.Del(ctx, state.roomsKey()).Err(); err != nil {
+		t.Fatalf("Del erro: %v", err)
+	}
+	late := uuid.New()
+	if err := client.HSet(ctx, state.presenceKey(late), "sid-a", `{"user_id":"`+uuid.NewString()+`","username":"alice"}`).Err(); err != nil {
+		t.Fatalf("HSet erro: %v", err)
+	}
+
+	indexed, err := state.IndexRoomsFromPresence(ctx)
+
+	if err != nil || indexed != 0 {
+		t.Fatalf("com a flag semeada = %d, err = %v, want 0 sem varrer de novo", indexed, err)
+	}
+	if member, err := client.SIsMember(ctx, state.roomsKey(), late.String()).Result(); err != nil || member {
+		t.Errorf("member = %v, err = %v, want sala fora do índice", member, err)
+	}
+
+	if err := client.Del(ctx, state.roomsSeededKey()).Err(); err != nil {
+		t.Fatalf("Del erro: %v", err)
+	}
+	if _, err := state.IndexRoomsFromPresence(ctx); err != nil {
+		t.Fatalf("IndexRoomsFromPresence erro: %v", err)
+	}
+
+	if member, err := client.SIsMember(ctx, state.roomsKey(), late.String()).Result(); err != nil || !member {
+		t.Fatalf("member = %v, err = %v, want sala indexada após expirar a flag", member, err)
+	}
+}
+
+func TestKVVoiceRoomState_IndexRoomsFromPresenceRetomaCicloIncompleto(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix := "vz:test-" + uuid.NewString()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+
+	ctx := context.Background()
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	state.seedBatchesPerRun = 1
+	const rooms = 1200
+	pipe := client.Pipeline()
+	for range rooms {
+		pipe.HSet(ctx, state.presenceKey(uuid.New()), "sid-a", `{"user_id":"`+uuid.NewString()+`","username":"alice"}`)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatalf("HSet erro: %v", err)
+	}
+
+	first, err := state.IndexRoomsFromPresence(ctx)
+
+	if !errors.Is(err, errRoomSeedIncomplete) {
+		t.Fatalf("primeiro ciclo err = %v, want %v", err, errRoomSeedIncomplete)
+	}
+	if first <= 0 || first >= rooms {
+		t.Fatalf("primeiro ciclo indexed = %d, want parcial", first)
+	}
+	cursor, err := state.seedCursor(ctx)
+	if err != nil || cursor == 0 {
+		t.Fatalf("cursor = %d, err = %v, want cursor persistido", cursor, err)
+	}
+	if exists, err := client.Exists(ctx, state.roomsSeededKey()).Result(); err != nil || exists != 0 {
+		t.Fatalf("flag semeada = %d, err = %v, want ausente antes de concluir", exists, err)
+	}
+
+	for range rooms {
+		if _, err := state.IndexRoomsFromPresence(ctx); err == nil {
+			break
+		}
+	}
+
+	if exists, err := client.Exists(ctx, state.roomsSeededKey()).Result(); err != nil || exists != 1 {
+		t.Fatalf("flag semeada = %d, err = %v, want presente após concluir", exists, err)
+	}
+	if exists, err := client.Exists(ctx, state.roomsSeedKey()).Result(); err != nil || exists != 0 {
+		t.Fatalf("marker do cursor = %d, err = %v, want removido após concluir", exists, err)
+	}
+	members, err := client.SCard(ctx, state.roomsKey()).Result()
+	if err != nil {
+		t.Fatalf("SCard erro: %v", err)
+	}
+	if members != rooms {
+		t.Errorf("salas no índice = %d, want %d", members, rooms)
+	}
+}
+
+func TestKVVoiceRoomState_HydrateLogaErroEnquantoIndexacaoIncompleta(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix := "vz:test-" + uuid.NewString()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+
+	ctx := context.Background()
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	state.seedBatchesPerRun = 1
+	pipe := client.Pipeline()
+	for range 1200 {
+		pipe.HSet(ctx, state.presenceKey(uuid.New()), "sid-a", `{"user_id":"`+uuid.NewString()+`","username":"alice"}`)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatalf("HSet erro: %v", err)
+	}
+	buf := captureLog(t)
+
+	mustHydrate(t, newHydrateService(&fakeRoomLister{}, state, &lockedPublisher{}))
+
+	if !strings.Contains(buf.String(), "voice.hydrate level=error step=index_rooms") {
+		t.Errorf("log = %q, want erro da indexação incompleta", buf.String())
+	}
+}
+
+func TestKVVoiceRoomState_RoomsWithStateDescartaMembroFantasma(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix := "vz:test-" + uuid.NewString()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+
+	ctx := context.Background()
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	live, phantom := uuid.New(), uuid.New()
+	mustJoin(t, state, live, participantOf(uuid.New(), "sid-a"), at(0))
+	if err := client.SAdd(ctx, state.roomsKey(), phantom.String()).Err(); err != nil {
+		t.Fatalf("SAdd erro: %v", err)
+	}
+
+	rooms := mustRoomsWithState(t, state)
+
+	if len(rooms) != 1 || rooms[0] != live {
+		t.Fatalf("salas com estado = %v, want só %s", rooms, live)
+	}
+	if member, err := client.SIsMember(ctx, state.roomsKey(), phantom.String()).Result(); err != nil || member {
+		t.Errorf("member fantasma = %v, err = %v, want removido do índice", member, err)
 	}
 }
 
@@ -258,7 +410,7 @@ func TestKVVoiceRoomState_HydratePreservedEmptyRoomKeepsRoomsTTL(t *testing.T) {
 	assertRoomKeysTTL(t, client, []string{state.roomsKey()})
 }
 
-func TestKVVoiceRoomState_HydrateIndexesRoomWhileRoomsSetExists(t *testing.T) {
+func TestKVVoiceRoomState_HydrateIndexesRoomWithRoomsSetPopulated(t *testing.T) {
 	client := newKVTestClient(t)
 	prefix := "vz:test-" + uuid.NewString()
 	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })

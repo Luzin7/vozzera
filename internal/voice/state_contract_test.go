@@ -97,6 +97,28 @@ func mustPresenceRevision(t *testing.T, s VoiceRoomState, roomID uuid.UUID) int6
 	return revision
 }
 
+func mustRoomsWithState(t *testing.T, s VoiceRoomState) []uuid.UUID {
+	t.Helper()
+	rooms, err := s.RoomsWithState(context.Background())
+	if err != nil {
+		t.Fatalf("RoomsWithState erro: %v", err)
+	}
+	return rooms
+}
+
+func assertRoomsWithState(t *testing.T, s VoiceRoomState, want ...uuid.UUID) {
+	t.Helper()
+	got := mustRoomsWithState(t, s)
+	if len(got) != len(want) {
+		t.Fatalf("salas com estado = %v, want %v", got, want)
+	}
+	for _, roomID := range want {
+		if !containsUUID(got, roomID) {
+			t.Fatalf("salas com estado = %v, want %v", got, want)
+		}
+	}
+}
+
 func awayUserIDs(snapshot RoomSnapshot) []uuid.UUID {
 	ids := make([]uuid.UUID, 0, len(snapshot.Away))
 	for _, entry := range snapshot.Away {
@@ -677,6 +699,51 @@ func runVoiceRoomStateContract(t *testing.T, newHarness newContractHarness) {
 
 			assertAwayUsers(t, mustSnapshot(t, s, roomID))
 		}
+	})
+
+	t.Run("RoomsWithState acompanha a sala até a última presença sair", func(t *testing.T) {
+		s := newHarness(t).state
+		roomID := uuid.New()
+		first, second := participantOf(uuid.New(), "sid-a"), participantOf(uuid.New(), "sid-b")
+
+		assertRoomsWithState(t, s)
+
+		mustJoin(t, s, roomID, first, at(0))
+		mustJoin(t, s, roomID, second, at(0))
+		assertRoomsWithState(t, s, roomID)
+
+		if _, err := s.Leave(ctx, LeaveInput{RoomID: roomID, SID: first.SID, At: at(0)}); err != nil {
+			t.Fatalf("Leave erro: %v", err)
+		}
+		assertRoomsWithState(t, s, roomID)
+
+		if _, err := s.Leave(ctx, LeaveInput{RoomID: roomID, SID: second.SID, At: at(0)}); err != nil {
+			t.Fatalf("Leave erro: %v", err)
+		}
+		assertRoomsWithState(t, s)
+
+		mustJoin(t, s, roomID, first, at(0))
+		if _, err := s.Finish(ctx, roomID); err != nil {
+			t.Fatalf("Finish erro: %v", err)
+		}
+		assertRoomsWithState(t, s)
+	})
+
+	t.Run("IndexRoomsFromPresence semeia uma vez e depois é no-op", func(t *testing.T) {
+		s := newHarness(t).state
+		roomID := uuid.New()
+		mustJoin(t, s, roomID, participantOf(uuid.New(), "sid-a"), at(0))
+
+		if _, err := s.IndexRoomsFromPresence(ctx); err != nil {
+			t.Fatalf("IndexRoomsFromPresence erro: %v", err)
+		}
+		assertRoomsWithState(t, s, roomID)
+
+		indexed, err := s.IndexRoomsFromPresence(ctx)
+		if err != nil || indexed != 0 {
+			t.Fatalf("segunda semeadura = %d, err = %v, want 0", indexed, err)
+		}
+		assertRoomsWithState(t, s, roomID)
 	})
 }
 
