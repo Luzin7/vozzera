@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ type fakeRoomLister struct {
 	participantErr   map[string]error
 	blockUntilDone   bool
 	participantBlock bool
+	visited          []string
 }
 
 func (f *fakeRoomLister) ListRooms(ctx context.Context) ([]LiveKitRoom, error) {
@@ -29,6 +31,7 @@ func (f *fakeRoomLister) ListRooms(ctx context.Context) ([]LiveKitRoom, error) {
 }
 
 func (f *fakeRoomLister) ListParticipants(ctx context.Context, roomName string) ([]Participant, error) {
+	f.visited = append(f.visited, roomName)
 	if f.participantBlock {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -66,6 +69,91 @@ func TestHydratePresenceService_PreencheSalasEPublicaSnapshot(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "voice.hydrate rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=0 invalid_rooms=0 duration_ms=") {
 		t.Errorf("log = %q, want resumo do voice.hydrate", buf.String())
+	}
+}
+
+func TestHydratePresenceService_RepublishesPresenceAndSessionEveryCycle(t *testing.T) {
+	state := newTestState()
+	publisher := &lockedPublisher{}
+	roomID, userID := uuid.New(), uuid.New()
+	lister := &fakeRoomLister{
+		rooms:        []LiveKitRoom{{Name: roomID.String(), CreatedAt: time.UnixMilli(sessionCreatedMs)}},
+		participants: map[string][]Participant{roomID.String(): {participantOf(userID, "sid-a")}},
+	}
+	service := newHydrateService(lister, state, publisher)
+
+	for cycle := range 2 {
+		if err := service.Execute(context.Background()); err != nil {
+			t.Fatalf("Execute ciclo %d erro: %v", cycle, err)
+		}
+	}
+
+	wantTypes := []string{realtime.PresenceSnapshot, EventSessionSnapshot, realtime.PresenceSnapshot, EventSessionSnapshot}
+	if got := publisher.types(); !reflect.DeepEqual(got, wantTypes) {
+		t.Fatalf("publicado = %v, want %v", got, wantTypes)
+	}
+	for _, index := range []int{0, 2} {
+		got := string(publisher.envelopes[index].Data)
+		if !strings.Contains(got, `"sid":"sid-a"`) {
+			t.Errorf("presença do ciclo %d = %s, want o participante observado", index/2+1, got)
+		}
+	}
+	for _, index := range []int{1, 3} {
+		got := string(publisher.envelopes[index].Data)
+		if got != `{"started_at":"2023-11-14T22:13:20.123Z"}` {
+			t.Errorf("sessão do ciclo %d = %s, want o horário de criação da sala", index/2+1, got)
+		}
+	}
+}
+
+func TestHydratePresenceService_RepublishesEmptyRoomPresenceAndSession(t *testing.T) {
+	state := newTestState()
+	publisher := &lockedPublisher{}
+	roomID := uuid.New()
+	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-ghost"), at(0))
+	service := newHydrateService(listerWithParticipants(roomID), state, publisher)
+
+	for cycle := range 2 {
+		if err := service.Execute(context.Background()); err != nil {
+			t.Fatalf("Execute ciclo %d erro: %v", cycle, err)
+		}
+	}
+
+	wantTypes := []string{realtime.PresenceSnapshot, EventSessionSnapshot, realtime.PresenceSnapshot, EventSessionSnapshot}
+	if got := publisher.types(); !reflect.DeepEqual(got, wantTypes) {
+		t.Fatalf("publicado = %v, want %v", got, wantTypes)
+	}
+	for _, index := range []int{0, 2} {
+		if got := string(publisher.envelopes[index].Data); got != "[]" {
+			t.Errorf("presença do ciclo %d = %s, want []", index/2+1, got)
+		}
+	}
+	for _, index := range []int{1, 3} {
+		if got := string(publisher.envelopes[index].Data); got != `{"started_at":null}` {
+			t.Errorf("sessão do ciclo %d = %s, want started_at null", index/2+1, got)
+		}
+	}
+}
+
+func TestHydratePresenceService_RotatesRoomOrderAcrossCycles(t *testing.T) {
+	first, second := uuid.New(), uuid.New()
+	lister := &fakeRoomLister{
+		rooms:            []LiveKitRoom{{Name: first.String()}, {Name: second.String()}},
+		participantBlock: true,
+	}
+	service := newHydrateService(lister, newTestState(), &lockedPublisher{})
+	service.timeout = 20 * time.Millisecond
+	captureLog(t)
+
+	for cycle := range 2 {
+		if err := service.Execute(context.Background()); err != nil {
+			t.Fatalf("Execute ciclo %d erro: %v", cycle, err)
+		}
+	}
+
+	want := []string{first.String(), second.String()}
+	if got := lister.visited; !reflect.DeepEqual(got, want) {
+		t.Fatalf("salas visitadas = %v, want %v", got, want)
 	}
 }
 

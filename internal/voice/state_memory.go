@@ -337,6 +337,10 @@ func (s *memoryVoiceRoomState) reconcilePresenceLocked(roomID uuid.UUID, partici
 	return true
 }
 
+func (s *memoryVoiceRoomState) TouchRoom(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+
 func (s *memoryVoiceRoomState) Beat(_ context.Context, instanceID uuid.UUID) (BeatResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

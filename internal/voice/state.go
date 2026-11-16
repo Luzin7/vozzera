@@ -97,5 +97,6 @@ type VoiceRoomState interface {
 	SweepDeadOwners(ctx context.Context) ([]AwayEntry, error)
 	PresenceRevision(ctx context.Context, roomID uuid.UUID) (int64, error)
 	HydrateRoom(ctx context.Context, in RoomHydration) (HydrateResult, error)
+	TouchRoom(ctx context.Context, roomID uuid.UUID) error
 	Beat(ctx context.Context, instanceID uuid.UUID) (BeatResult, error)
 }

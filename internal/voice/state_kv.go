@@ -20,11 +20,16 @@ var scriptFiles embed.FS
 const (
 	kvOperationTimeout = 2 * time.Second
 	instanceTTL        = 30 * time.Second
+	roomStateTTL       = 10 * time.Minute
 )
 
 var errUnexpectedScriptReply = errors.New("resposta inesperada do script do key value")
 
 var errPresenceRevisionInvalid = errors.New("revisão de presença inválida")
+
+func roomStateTTLSeconds() int64 {
+	return int64(roomStateTTL / time.Second)
+}
 
 type kvScripts struct {
 	presenceJoin  *redis.Script
@@ -127,7 +132,7 @@ func (s *kvVoiceRoomState) Join(ctx context.Context, in JoinInput) (JoinResult, 
 	sessionMillis, origin := sessionOrigin(in.RoomCreatedAt, at)
 	reply, err := s.run(ctx, s.scripts.presenceJoin,
 		[]string{s.presenceKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID)},
-		p.SID, string(value), p.UserID, at.UnixMilli(), s.prefix, sessionMillis, origin)
+		p.SID, string(value), p.UserID, at.UnixMilli(), s.prefix, sessionMillis, origin, roomStateTTLSeconds())
 	if err != nil {
 		return JoinResult{}, err
 	}
@@ -155,7 +160,7 @@ func (s *kvVoiceRoomState) Leave(ctx context.Context, in LeaveInput) (LeaveResul
 	sessionMillis, origin := sessionOrigin(in.RoomCreatedAt, in.At)
 	reply, err := s.run(ctx, s.scripts.presenceLeave,
 		[]string{s.presenceKey(roomID), s.awayKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID)},
-		sid, roomID.String(), sessionMillis, origin)
+		sid, roomID.String(), sessionMillis, origin, roomStateTTLSeconds())
 	if err != nil {
 		return LeaveResult{}, err
 	}
@@ -356,6 +361,18 @@ func hydrateResultFrom(reply []any, roomID uuid.UUID) (HydrateResult, error) {
 		return HydrateResult{}, err
 	}
 	return HydrateResult{Written: written == 1, Conflict: conflict == 1, SessionStartedAt: startedAt, RemovedAway: removedAway}, nil
+}
+
+func (s *kvVoiceRoomState) TouchRoom(ctx context.Context, roomID uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(ctx, kvOperationTimeout)
+	defer cancel()
+
+	pipe := s.client.Pipeline()
+	for _, key := range []string{s.presenceKey(roomID), s.sessionKey(roomID), s.awayKey(roomID), s.revisionKey(roomID)} {
+		pipe.Expire(ctx, key, roomStateTTL)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (s *kvVoiceRoomState) Beat(ctx context.Context, instanceID uuid.UUID) (BeatResult, error) {

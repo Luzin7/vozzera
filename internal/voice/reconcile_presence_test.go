@@ -264,8 +264,8 @@ func TestHydratePresenceService_MantemSalaVaziaAteASegundaObservacao(t *testing.
 			if len(snapshot.Participants) != 2 || len(snapshot.Away) != 1 || snapshot.SessionStartedAt == nil {
 				t.Fatalf("snapshot = %+v, want presença, sessão e ausente preservados", snapshot)
 			}
-			if got := publisher.types(); len(got) != 0 {
-				t.Errorf("publicado = %v, want nada na primeira observação", got)
+			if got := publisher.types(); !reflect.DeepEqual(got, []string{realtime.PresenceSnapshot, EventSessionSnapshot}) {
+				t.Errorf("publicado = %v, want o anúncio de sala vazia já na primeira observação", got)
 			}
 			if !strings.Contains(buf.String(), "empty_pending=1") {
 				t.Errorf("log = %q, want empty_pending=1", buf.String())
@@ -356,21 +356,21 @@ func TestHydratePresenceService_DescartaContagemDeSalaForaDaReconciliacao(t *tes
 func assertAwayEnded(t *testing.T, publisher *lockedPublisher, userID uuid.UUID) {
 	t.Helper()
 
-	want := []string{EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot}
+	want := []string{realtime.PresenceSnapshot, EventSessionSnapshot, EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot}
 	if got := publisher.types(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("publicado = %v, want %v", got, want)
 	}
-	if got := string(publisher.envelopes[0].Data); got != "[]" {
+	if got := string(publisher.envelopes[2].Data); got != "[]" {
 		t.Errorf("away snapshot = %s, want []", got)
 	}
 	var payload awayEndedPayload
-	if err := json.Unmarshal(publisher.envelopes[1].Data, &payload); err != nil {
+	if err := json.Unmarshal(publisher.envelopes[3].Data, &payload); err != nil {
 		t.Fatalf("payload erro: %v", err)
 	}
 	if payload.UserID != userID || payload.Reason != AwayEndedRoomEmpty {
 		t.Errorf("away ended = %+v, want user=%s reason=%s", payload, userID, AwayEndedRoomEmpty)
 	}
-	if got := string(publisher.envelopes[3].Data); got != `{"started_at":null}` {
+	if got := string(publisher.envelopes[5].Data); got != `{"started_at":null}` {
 		t.Errorf("sessão = %s, want started_at nil", got)
 	}
 }
