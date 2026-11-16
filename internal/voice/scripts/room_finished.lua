@@ -1,5 +1,7 @@
 redis.call('DEL', KEYS[1], KEYS[4])
 redis.call('INCR', KEYS[5])
+redis.call('EXPIRE', KEYS[5], ARGV[2])
+redis.call('SREM', KEYS[6], ARGV[1])
 
 local removed_away = {}
 local entries = redis.call('HGETALL', KEYS[2])

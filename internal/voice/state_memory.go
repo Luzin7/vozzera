@@ -341,6 +341,22 @@ func (s *memoryVoiceRoomState) TouchRoom(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
+func (s *memoryVoiceRoomState) RoomsWithState(_ context.Context) ([]uuid.UUID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rooms := make([]uuid.UUID, 0, len(s.presence))
+	for roomID := range s.presence {
+		rooms = append(rooms, roomID)
+	}
+	sort.Slice(rooms, func(i, j int) bool { return rooms[i].String() < rooms[j].String() })
+	return rooms, nil
+}
+
+func (s *memoryVoiceRoomState) IndexRoomsFromPresence(context.Context) (int, error) {
+	return 0, nil
+}
+
 func (s *memoryVoiceRoomState) Beat(_ context.Context, instanceID uuid.UUID) (BeatResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

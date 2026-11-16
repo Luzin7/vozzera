@@ -7,6 +7,7 @@ end
 
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('INCR', KEYS[4])
+redis.call('SADD', KEYS[5], ARGV[9])
 open_session(KEYS[3], ARGV[6], ARGV[7])
 
 local cleared_room = ''
@@ -27,5 +28,6 @@ end
 redis.call('EXPIRE', KEYS[1], ARGV[8])
 redis.call('EXPIRE', KEYS[3], ARGV[8])
 redis.call('EXPIRE', KEYS[4], ARGV[8])
+redis.call('EXPIRE', KEYS[5], ARGV[8])
 
 return {redis.call('HGETALL', KEYS[1]), cleared_room, cleared_entry, redis.call('GET', KEYS[3]) or ''}

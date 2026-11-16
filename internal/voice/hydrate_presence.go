@@ -20,38 +20,48 @@ const (
 var errPresenceRevisionConflict = errors.New("presença alterada durante a reconciliação")
 
 type HydratePresenceService struct {
-	lister            RoomLister
-	state             VoiceRoomState
-	events            *awayEvents
-	timeout           time.Duration
-	cursor            int
-	emptyObservations map[uuid.UUID]int
+	lister               RoomLister
+	state                VoiceRoomState
+	events               *awayEvents
+	timeout              time.Duration
+	cursor               int
+	emptyObservations    map[uuid.UUID]int
+	vanishedObservations map[uuid.UUID]int
 }
 
 func NewHydratePresenceService(lister RoomLister, state VoiceRoomState, publisher realtime.Publisher) *HydratePresenceService {
 	return &HydratePresenceService{
-		lister:            lister,
-		state:             state,
-		events:            newAwayEvents(state, publisher),
-		timeout:           hydrationTimeout,
-		emptyObservations: make(map[uuid.UUID]int),
+		lister:               lister,
+		state:                state,
+		events:               newAwayEvents(state, publisher),
+		timeout:              hydrationTimeout,
+		emptyObservations:    make(map[uuid.UUID]int),
+		vanishedObservations: make(map[uuid.UUID]int),
 	}
 }
 
 type hydrationTally struct {
-	rooms         int
-	participants  int
-	emptyPending  int
-	skippedBudget int
-	failed        int
-	touchFailed   int
-	invalidRooms  int
+	rooms           int
+	participants    int
+	emptyPending    int
+	skippedBudget   int
+	vanished        int
+	vanishedPending int
+	failed          int
+	touchFailed     int
+	invalidRooms    int
 }
 
 type roomReconcile struct {
 	participants int
 	emptyPending bool
 	touchFailed  bool
+}
+
+type vanishedSweep struct {
+	vanished int
+	pending  int
+	failed   int
 }
 
 func (s *HydratePresenceService) Execute(ctx context.Context) error {
@@ -61,27 +71,55 @@ func (s *HydratePresenceService) Execute(ctx context.Context) error {
 
 	tally, err := s.hydrateRooms(ctx)
 
-	level := "info"
-	if tally.touchFailed > 0 {
-		level = "warn"
-	}
-	log.Printf("voice.hydrate level=%s rooms=%d participants=%d empty_pending=%d skipped_budget=%d failed=%d touch_failed=%d invalid_rooms=%d duration_ms=%d",
-		level, tally.rooms, tally.participants, tally.emptyPending, tally.skippedBudget, tally.failed, tally.touchFailed, tally.invalidRooms, time.Since(start).Milliseconds())
+	log.Printf("voice.hydrate level=%s rooms=%d participants=%d empty_pending=%d skipped_budget=%d vanished=%d vanished_pending=%d failed=%d touch_failed=%d invalid_rooms=%d duration_ms=%d",
+		hydrationLogLevel(tally, err), tally.rooms, tally.participants, tally.emptyPending, tally.skippedBudget, tally.vanished, tally.vanishedPending, tally.failed, tally.touchFailed, tally.invalidRooms, time.Since(start).Milliseconds())
 	return err
 }
 
-func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTally, error) {
-	var tally hydrationTally
+func hydrationLogLevel(tally hydrationTally, err error) string {
+	if err != nil || tally.failed > 0 {
+		return "error"
+	}
+	if tally.touchFailed > 0 {
+		return "warn"
+	}
+	return "info"
+}
 
+func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTally, error) {
 	rooms, err := s.lister.ListRooms(ctx)
 	if err != nil {
 		log.Printf("voice.hydrate level=error step=list_rooms err=%q", err)
-		return tally, err
+		return hydrationTally{}, err
 	}
 
-	ordered := s.rotateRooms(rooms)
-	seen := make(map[uuid.UUID]struct{}, len(ordered))
+	s.indexRooms(ctx)
+	tally, attempted, failures := s.reconcileListedRooms(ctx, rooms)
+	s.cursor += attempted
+
+	listed := listedRoomIDs(rooms)
+	for roomID := range listed {
+		delete(s.vanishedObservations, roomID)
+	}
+	tracked, err := s.state.RoomsWithState(ctx)
+	if err != nil {
+		log.Printf("voice.hydrate level=error step=rooms_with_state err=%q", err)
+		s.pruneObservations(listed)
+		return tally, errors.Join(failures, fmt.Errorf("salas com estado: %w", err))
+	}
+
+	sweep, err := s.sweepVanished(ctx, listed, tracked)
+	tally.vanished = sweep.vanished
+	tally.vanishedPending = sweep.pending
+	tally.failed += sweep.failed
+	s.pruneObservations(trackedRooms(listed, tracked))
+	return tally, errors.Join(failures, err)
+}
+
+func (s *HydratePresenceService) reconcileListedRooms(ctx context.Context, rooms []LiveKitRoom) (hydrationTally, int, error) {
+	var tally hydrationTally
 	var failures []error
+	ordered := s.rotateRooms(rooms)
 	attempted := 0
 	for i, room := range ordered {
 		if ctx.Err() != nil {
@@ -94,7 +132,6 @@ func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTal
 			tally.invalidRooms++
 			continue
 		}
-		seen[roomID] = struct{}{}
 
 		attempted++
 		result, err := s.reconcileRoom(ctx, room, roomID)
@@ -118,10 +155,86 @@ func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTal
 			tally.emptyPending++
 		}
 	}
+	return tally, attempted, errors.Join(failures...)
+}
 
-	s.cursor += attempted
-	s.pruneEmptyObservations(seen)
-	return tally, errors.Join(failures...)
+func (s *HydratePresenceService) indexRooms(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, kvOperationTimeout)
+	defer cancel()
+
+	indexed, err := s.state.IndexRoomsFromPresence(ctx)
+	if err != nil {
+		log.Printf("voice.hydrate level=error step=index_rooms err=%q", err)
+		return
+	}
+	if indexed > 0 {
+		log.Printf("voice.hydrate level=info step=index_rooms rooms=%d", indexed)
+	}
+}
+
+func (s *HydratePresenceService) sweepVanished(ctx context.Context, listed map[uuid.UUID]struct{}, tracked []uuid.UUID) (vanishedSweep, error) {
+	var sweep vanishedSweep
+	var failures []error
+	for _, roomID := range tracked {
+		if _, ok := listed[roomID]; ok {
+			continue
+		}
+		delete(s.emptyObservations, roomID)
+		s.vanishedObservations[roomID]++
+		if s.vanishedObservations[roomID] < emptyConfirmationCycles {
+			sweep.pending++
+			continue
+		}
+		if err := s.sweepRoom(ctx, roomID); err != nil {
+			log.Printf("voice.hydrate level=error step=vanished room_id=%s err=%q", roomID, err)
+			failures = append(failures, fmt.Errorf("sala ausente %s: %w", roomID, err))
+			sweep.failed++
+			continue
+		}
+		delete(s.vanishedObservations, roomID)
+		sweep.vanished++
+	}
+	return sweep, errors.Join(failures...)
+}
+
+func (s *HydratePresenceService) sweepRoom(ctx context.Context, roomID uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kvOperationTimeout)
+	defer cancel()
+
+	snapshot, err := s.state.Snapshot(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	s.announceRemovedAway(ctx, roomID, snapshot.Away, "room_gone")
+	s.announcePresence(ctx, roomID, nil, nil)
+
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), kvOperationTimeout)
+	defer finishCancel()
+	_, err = s.state.Finish(finishCtx, roomID)
+	return err
+}
+
+func listedRoomIDs(rooms []LiveKitRoom) map[uuid.UUID]struct{} {
+	listed := make(map[uuid.UUID]struct{}, len(rooms))
+	for _, room := range rooms {
+		roomID, err := uuid.Parse(room.Name)
+		if err != nil {
+			continue
+		}
+		listed[roomID] = struct{}{}
+	}
+	return listed
+}
+
+func trackedRooms(listed map[uuid.UUID]struct{}, tracked []uuid.UUID) map[uuid.UUID]struct{} {
+	keep := make(map[uuid.UUID]struct{}, len(listed)+len(tracked))
+	for roomID := range listed {
+		keep[roomID] = struct{}{}
+	}
+	for _, roomID := range tracked {
+		keep[roomID] = struct{}{}
+	}
+	return keep
 }
 
 func (s *HydratePresenceService) reconcileRoom(ctx context.Context, room LiveKitRoom, roomID uuid.UUID) (result roomReconcile, err error) {
@@ -162,7 +275,7 @@ func (s *HydratePresenceService) reconcileRoom(ctx context.Context, room LiveKit
 		return result, errPresenceRevisionConflict
 	}
 
-	s.announceRemovedAway(ctx, roomID, hydrated.RemovedAway)
+	s.announceRemovedAway(ctx, roomID, hydrated.RemovedAway, "room_empty")
 
 	if hydrated.Written && room.CreatedAt.IsZero() {
 		log.Printf("voice.session level=warn cause=missing_room_creation_time step=hydrate room_id=%s", roomID)
@@ -240,21 +353,23 @@ func (s *HydratePresenceService) rotateRooms(rooms []LiveKitRoom) []LiveKitRoom 
 	return append(ordered, rooms[:offset]...)
 }
 
-func (s *HydratePresenceService) pruneEmptyObservations(seen map[uuid.UUID]struct{}) {
-	for roomID := range s.emptyObservations {
-		if _, ok := seen[roomID]; !ok {
-			delete(s.emptyObservations, roomID)
+func (s *HydratePresenceService) pruneObservations(seen map[uuid.UUID]struct{}) {
+	for _, observations := range []map[uuid.UUID]int{s.emptyObservations, s.vanishedObservations} {
+		for roomID := range observations {
+			if _, ok := seen[roomID]; !ok {
+				delete(observations, roomID)
+			}
 		}
 	}
 }
 
-func (s *HydratePresenceService) announceRemovedAway(ctx context.Context, roomID uuid.UUID, removed []AwayEntry) {
+func (s *HydratePresenceService) announceRemovedAway(ctx context.Context, roomID uuid.UUID, removed []AwayEntry, cause string) {
 	if len(removed) == 0 {
 		return
 	}
 	s.events.publishAwayList(ctx, roomID, nil)
 	for _, entry := range removed {
-		logAwayCleared(entry, "room_empty")
+		logAwayCleared(entry, cause)
 		s.events.publishEnded(ctx, roomID, entry.UserID, AwayEndedRoomEmpty)
 	}
 }
