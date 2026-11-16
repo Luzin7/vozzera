@@ -24,7 +24,7 @@ type HydratePresenceService struct {
 	state             VoiceRoomState
 	events            *awayEvents
 	timeout           time.Duration
-	cycle             int
+	cursor            int
 	emptyObservations map[uuid.UUID]int
 }
 
@@ -44,12 +44,14 @@ type hydrationTally struct {
 	emptyPending  int
 	skippedBudget int
 	failed        int
+	touchFailed   int
 	invalidRooms  int
 }
 
 type roomReconcile struct {
 	participants int
 	emptyPending bool
+	touchFailed  bool
 }
 
 func (s *HydratePresenceService) Execute(ctx context.Context) error {
@@ -59,8 +61,8 @@ func (s *HydratePresenceService) Execute(ctx context.Context) error {
 
 	tally, err := s.hydrateRooms(ctx)
 
-	log.Printf("voice.hydrate rooms=%d participants=%d empty_pending=%d skipped_budget=%d failed=%d invalid_rooms=%d duration_ms=%d",
-		tally.rooms, tally.participants, tally.emptyPending, tally.skippedBudget, tally.failed, tally.invalidRooms, time.Since(start).Milliseconds())
+	log.Printf("voice.hydrate rooms=%d participants=%d empty_pending=%d skipped_budget=%d failed=%d touch_failed=%d invalid_rooms=%d duration_ms=%d",
+		tally.rooms, tally.participants, tally.emptyPending, tally.skippedBudget, tally.failed, tally.touchFailed, tally.invalidRooms, time.Since(start).Milliseconds())
 	return err
 }
 
@@ -76,6 +78,7 @@ func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTal
 	ordered := s.rotateRooms(rooms)
 	seen := make(map[uuid.UUID]struct{}, len(ordered))
 	var failures []error
+	attempted := 0
 	for i, room := range ordered {
 		if ctx.Err() != nil {
 			tally.skippedBudget += len(ordered) - i
@@ -89,7 +92,11 @@ func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTal
 		}
 		seen[roomID] = struct{}{}
 
+		attempted++
 		result, err := s.reconcileRoom(ctx, room, roomID)
+		if result.touchFailed {
+			tally.touchFailed++
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				tally.skippedBudget += len(ordered) - i
@@ -108,22 +115,25 @@ func (s *HydratePresenceService) hydrateRooms(ctx context.Context) (hydrationTal
 		}
 	}
 
+	s.cursor += attempted
 	s.pruneEmptyObservations(seen)
 	return tally, errors.Join(failures...)
 }
 
-func (s *HydratePresenceService) reconcileRoom(ctx context.Context, room LiveKitRoom, roomID uuid.UUID) (roomReconcile, error) {
+func (s *HydratePresenceService) reconcileRoom(ctx context.Context, room LiveKitRoom, roomID uuid.UUID) (result roomReconcile, err error) {
 	ctx, cancel := context.WithTimeout(ctx, roomHydrationTimeout)
 	defer cancel()
 
 	revision, err := s.state.PresenceRevision(ctx, roomID)
 	if err != nil {
-		return roomReconcile{}, err
+		return result, err
 	}
+
+	result.touchFailed = !s.touchRoom(ctx, roomID)
 
 	observed, err := s.lister.ListParticipants(ctx, room.Name)
 	if err != nil {
-		return roomReconcile{}, err
+		return result, err
 	}
 
 	participants := withUUIDIdentity(observed)
@@ -138,14 +148,14 @@ func (s *HydratePresenceService) reconcileRoom(ctx context.Context, room LiveKit
 		PreserveEmpty:    empty && !applyEmpty,
 	})
 	if err != nil {
-		return roomReconcile{}, err
+		return result, err
+	}
+	if hydrated.Written && !s.touchRoom(ctx, roomID) {
+		result.touchFailed = true
 	}
 	if hydrated.Conflict {
-		return roomReconcile{}, errPresenceRevisionConflict
-	}
-
-	if err := s.state.TouchRoom(ctx, roomID); err != nil {
-		log.Printf("voice.room.ttl level=error room_id=%s err=%q", roomID, err)
+		s.announceConflictState(ctx, roomID)
+		return result, errPresenceRevisionConflict
 	}
 
 	s.announceRemovedAway(ctx, roomID, hydrated.RemovedAway)
@@ -157,9 +167,11 @@ func (s *HydratePresenceService) reconcileRoom(ctx context.Context, room LiveKit
 	s.announcePresence(ctx, roomID, participants, hydrated.SessionStartedAt)
 
 	if s.trackEmptyObservation(roomID, empty, applyEmpty) {
-		return roomReconcile{emptyPending: true}, nil
+		result.emptyPending = true
+		return result, nil
 	}
-	return roomReconcile{participants: len(participants)}, nil
+	result.participants = len(participants)
+	return result, nil
 }
 
 func (s *HydratePresenceService) trackEmptyObservation(roomID uuid.UUID, empty, applyEmpty bool) bool {
@@ -179,8 +191,35 @@ func (s *HydratePresenceService) announcePresence(ctx context.Context, roomID uu
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
 	defer cancel()
 
+	publishedAt := startedAt
+	if len(participants) == 0 {
+		publishedAt = nil
+	}
 	s.events.publishPresence(ctx, roomID, realtime.PresenceSnapshot, participants)
-	s.events.publishSession(ctx, roomID, sessionStartOf(RoomSnapshot{Participants: participants, SessionStartedAt: startedAt}))
+	s.events.publishSession(ctx, roomID, publishedAt)
+}
+
+func (s *HydratePresenceService) announceConflictState(ctx context.Context, roomID uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kvOperationTimeout)
+	defer cancel()
+
+	snapshot, err := s.state.Snapshot(ctx, roomID)
+	if err != nil {
+		log.Printf("voice.hydrate level=error step=conflict_snapshot room_id=%s err=%q", roomID, err)
+		return
+	}
+	s.announcePresence(ctx, roomID, snapshot.Participants, snapshot.SessionStartedAt)
+}
+
+func (s *HydratePresenceService) touchRoom(ctx context.Context, roomID uuid.UUID) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kvOperationTimeout)
+	defer cancel()
+
+	if err := s.state.TouchRoom(ctx, roomID); err != nil {
+		log.Printf("voice.room.ttl level=error room_id=%s err=%q", roomID, err)
+		return false
+	}
+	return true
 }
 
 func (s *HydratePresenceService) rotateRooms(rooms []LiveKitRoom) []LiveKitRoom {
@@ -188,8 +227,10 @@ func (s *HydratePresenceService) rotateRooms(rooms []LiveKitRoom) []LiveKitRoom 
 		return rooms
 	}
 
-	offset := s.cycle % len(rooms)
-	s.cycle++
+	offset := s.cursor % len(rooms)
+	if offset == 0 {
+		return rooms
+	}
 	ordered := make([]LiveKitRoom, 0, len(rooms))
 	ordered = append(ordered, rooms[offset:]...)
 	return append(ordered, rooms[:offset]...)

@@ -20,7 +20,7 @@ var scriptFiles embed.FS
 const (
 	kvOperationTimeout = 2 * time.Second
 	instanceTTL        = 30 * time.Second
-	roomStateTTL       = 10 * time.Minute
+	roomStateTTL       = 30 * time.Minute
 )
 
 var errUnexpectedScriptReply = errors.New("resposta inesperada do script do key value")
@@ -238,7 +238,7 @@ func (s *kvVoiceRoomState) EnterAway(ctx context.Context, entry AwayEntry) (Ente
 
 	reply, err := s.run(ctx, s.scripts.awayEnter,
 		[]string{s.presenceKey(entry.RoomID), s.awayKey(entry.RoomID), s.indexKey(), s.revisionKey(entry.RoomID)},
-		entry.UserID.String(), string(value), entry.RoomID.String(), s.prefix)
+		entry.UserID.String(), string(value), entry.RoomID.String(), s.prefix, roomStateTTLSeconds())
 	if err != nil {
 		return EnterAwayResult{}, err
 	}

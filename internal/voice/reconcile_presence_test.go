@@ -186,12 +186,16 @@ func TestHydratePresenceService_ReconciliaPresencaComLiveKit(t *testing.T) {
 				mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-stale"), at(0))
 				lister := listerWithParticipants(roomID)
 				lister.participantErr = map[string]error{roomID.String(): errors.New("timeout")}
+				publisher := &lockedPublisher{}
 				buf := captureLog(t)
 
-				err := newHydrateService(lister, state, &lockedPublisher{}).Execute(context.Background())
+				err := newHydrateService(lister, state, publisher).Execute(context.Background())
 
 				if err == nil {
 					t.Fatal("Execute deveria devolver o erro")
+				}
+				if got := publisher.types(); len(got) != 0 {
+					t.Errorf("publicado = %v, want nada: erro de observação nunca vira sala vazia", got)
 				}
 				assertParticipantSIDs(t, state, roomID, "sid-stale")
 				if !strings.Contains(buf.String(), "voice.hydrate level=error room_id="+roomID.String()) {
@@ -316,12 +320,24 @@ func TestHydratePresenceService_ConflitoNaoContaComoObservacaoVazia(t *testing.T
 				VoiceRoomState: base,
 				join:           JoinInput{RoomID: roomID, Participant: participantOf(uuid.New(), "sid-late"), At: at(0)},
 			}
-			service := newHydrateService(listerWithParticipants(roomID), state, &lockedPublisher{})
+			publisher := &lockedPublisher{}
+			service := newHydrateService(listerWithParticipants(roomID), state, publisher)
 
 			if err := service.Execute(context.Background()); err == nil {
 				t.Fatal("Execute deveria sinalizar conflito")
 			}
 			assertParticipantSIDs(t, base, roomID, "sid-present", "sid-late")
+
+			want := []string{realtime.PresenceSnapshot, EventSessionSnapshot}
+			if got := publisher.types(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("publicado = %v, want %v", got, want)
+			}
+			publishedPresence := string(publisher.envelopes[0].Data)
+			for _, sid := range []string{"sid-present", "sid-late"} {
+				if !strings.Contains(publishedPresence, sid) {
+					t.Errorf("presença publicada = %s, want %s sem publicar sala vazia", publishedPresence, sid)
+				}
+			}
 
 			mustHydrate(t, service)
 

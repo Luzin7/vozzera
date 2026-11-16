@@ -69,6 +69,17 @@ func TestKVVoiceRoomState_JoinAndLeaveSetRoomKeysTTL(t *testing.T) {
 	assertRoomKeysTTL(t, client, keys)
 }
 
+func TestKVVoiceRoomState_EnterAwaySetsRoomKeysTTL(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix, roomID, caller, other := "vz:test-"+uuid.NewString(), uuid.New(), uuid.New(), uuid.New()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	mustJoin(t, state, roomID, participantOf(other, "sid-other"), at(0))
+	mustEnterAway(t, state, newAwayEntry(roomID, forUser(caller)))
+
+	assertRoomKeysTTL(t, client, roomKeys(state, roomID))
+}
+
 func TestKVVoiceRoomState_HydrateRefreshesRoomKeysTTL(t *testing.T) {
 	client := newKVTestClient(t)
 	prefix, roomID, caller, other := "vz:test-"+uuid.NewString(), uuid.New(), uuid.New(), uuid.New()
