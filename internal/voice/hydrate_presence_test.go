@@ -67,7 +67,7 @@ func TestHydratePresenceService_PreencheSalasEPublicaSnapshot(t *testing.T) {
 	if got := string(publisher.last().Data); got != `{"started_at":"2023-11-14T22:13:20.123Z"}` {
 		t.Errorf("sessão = %s, want o horário de criação da sala", got)
 	}
-	if !strings.Contains(buf.String(), "voice.hydrate rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=0 touch_failed=0 invalid_rooms=0 duration_ms=") {
+	if !strings.Contains(buf.String(), "voice.hydrate level=info rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=0 touch_failed=0 invalid_rooms=0 duration_ms=") {
 		t.Errorf("log = %q, want resumo do voice.hydrate", buf.String())
 	}
 }
@@ -240,6 +240,39 @@ func TestHydratePresenceService_FalhaEmUmaSalaContaComoFalhaEContinua(t *testing
 	if !strings.Contains(buf.String(), "voice.hydrate level=error room_id="+broken.String()) {
 		t.Errorf("log = %q, want a sala com falha", buf.String())
 	}
+}
+
+func TestHydratePresenceService_TouchFailureCountsInSummary(t *testing.T) {
+	roomID, userID := uuid.New(), uuid.New()
+	lister := &fakeRoomLister{
+		rooms:        []LiveKitRoom{{Name: roomID.String(), CreatedAt: time.UnixMilli(sessionCreatedMs)}},
+		participants: map[string][]Participant{roomID.String(): {participantOf(userID, "sid-a")}},
+	}
+	publisher := &lockedPublisher{}
+	buf := captureLog(t)
+	state := touchFailingState{VoiceRoomState: newTestState()}
+
+	if err := newHydrateService(lister, state, publisher).Execute(context.Background()); err != nil {
+		t.Fatalf("Execute erro: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "voice.hydrate level=warn rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=0 touch_failed=1 invalid_rooms=0") {
+		t.Errorf("log = %q, want touch_failed=1 no resumo em warn", buf.String())
+	}
+	if !strings.Contains(buf.String(), "voice.room.ttl level=error room_id="+roomID.String()) {
+		t.Errorf("log = %q, want o erro do TouchRoom", buf.String())
+	}
+	if got := publisher.types(); len(got) != 2 {
+		t.Errorf("publicado = %v, want presença e sessão mesmo com falha no TTL", got)
+	}
+}
+
+type touchFailingState struct {
+	VoiceRoomState
+}
+
+func (s touchFailingState) TouchRoom(context.Context, uuid.UUID) error {
+	return errors.New("expire falhou")
 }
 
 func TestHydratePresenceService_RespeitaOTetoDeCincoSegundos(t *testing.T) {

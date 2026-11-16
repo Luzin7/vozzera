@@ -61,8 +61,12 @@ func (s *HydratePresenceService) Execute(ctx context.Context) error {
 
 	tally, err := s.hydrateRooms(ctx)
 
-	log.Printf("voice.hydrate rooms=%d participants=%d empty_pending=%d skipped_budget=%d failed=%d touch_failed=%d invalid_rooms=%d duration_ms=%d",
-		tally.rooms, tally.participants, tally.emptyPending, tally.skippedBudget, tally.failed, tally.touchFailed, tally.invalidRooms, time.Since(start).Milliseconds())
+	level := "info"
+	if tally.touchFailed > 0 {
+		level = "warn"
+	}
+	log.Printf("voice.hydrate level=%s rooms=%d participants=%d empty_pending=%d skipped_budget=%d failed=%d touch_failed=%d invalid_rooms=%d duration_ms=%d",
+		level, tally.rooms, tally.participants, tally.emptyPending, tally.skippedBudget, tally.failed, tally.touchFailed, tally.invalidRooms, time.Since(start).Milliseconds())
 	return err
 }
 
