@@ -29,6 +29,12 @@ func TestLiveKitHTTPBaseURL(t *testing.T) {
 	}
 }
 
+func TestNewLiveKitHTTPClient_TimeoutDeDoisSegundos(t *testing.T) {
+	if got := newLiveKitHTTPClient().Timeout; got != 2*time.Second {
+		t.Errorf("timeout do cliente LiveKit = %v, want 2s", got)
+	}
+}
+
 type recordedRequest struct {
 	path  string
 	grant *auth.VideoGrant
