@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ const (
 	kvOperationTimeout = 2 * time.Second
 	instanceTTL        = 30 * time.Second
 	roomStateTTL       = 30 * time.Minute
+	roomScanBatch      = 500
 )
 
 var errUnexpectedScriptReply = errors.New("resposta inesperada do script do key value")
@@ -107,6 +109,10 @@ func (s *kvVoiceRoomState) indexKey() string {
 	return s.prefix + ":away:index"
 }
 
+func (s *kvVoiceRoomState) roomsKey() string {
+	return s.prefix + ":rooms"
+}
+
 func (s *kvVoiceRoomState) instanceKey(instanceID uuid.UUID) string {
 	return s.prefix + ":instance:" + instanceID.String()
 }
@@ -131,8 +137,8 @@ func (s *kvVoiceRoomState) Join(ctx context.Context, in JoinInput) (JoinResult, 
 
 	sessionMillis, origin := sessionOrigin(in.RoomCreatedAt, at)
 	reply, err := s.run(ctx, s.scripts.presenceJoin,
-		[]string{s.presenceKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID)},
-		p.SID, string(value), p.UserID, at.UnixMilli(), s.prefix, sessionMillis, origin, roomStateTTLSeconds())
+		[]string{s.presenceKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID), s.roomsKey()},
+		p.SID, string(value), p.UserID, at.UnixMilli(), s.prefix, sessionMillis, origin, roomStateTTLSeconds(), roomID.String())
 	if err != nil {
 		return JoinResult{}, err
 	}
@@ -159,7 +165,7 @@ func (s *kvVoiceRoomState) Leave(ctx context.Context, in LeaveInput) (LeaveResul
 	roomID, sid := in.RoomID, in.SID
 	sessionMillis, origin := sessionOrigin(in.RoomCreatedAt, in.At)
 	reply, err := s.run(ctx, s.scripts.presenceLeave,
-		[]string{s.presenceKey(roomID), s.awayKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID)},
+		[]string{s.presenceKey(roomID), s.awayKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID), s.roomsKey()},
 		sid, roomID.String(), sessionMillis, origin, roomStateTTLSeconds())
 	if err != nil {
 		return LeaveResult{}, err
@@ -190,8 +196,8 @@ func (s *kvVoiceRoomState) Leave(ctx context.Context, in LeaveInput) (LeaveResul
 
 func (s *kvVoiceRoomState) Finish(ctx context.Context, roomID uuid.UUID) ([]AwayEntry, error) {
 	reply, err := s.run(ctx, s.scripts.roomFinished,
-		[]string{s.presenceKey(roomID), s.awayKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID)},
-		roomID.String())
+		[]string{s.presenceKey(roomID), s.awayKey(roomID), s.indexKey(), s.sessionKey(roomID), s.revisionKey(roomID), s.roomsKey()},
+		roomID.String(), roomStateTTLSeconds())
 	if err != nil {
 		return nil, err
 	}
@@ -316,8 +322,8 @@ func (s *kvVoiceRoomState) HydrateRoom(ctx context.Context, in RoomHydration) (H
 	if in.PreserveEmpty {
 		preserveEmpty = 1
 	}
-	args := make([]any, 0, len(in.Participants)*2+5)
-	args = append(args, sessionMillis, origin, in.ExpectedRevision, preserveEmpty, in.RoomID.String())
+	args := make([]any, 0, len(in.Participants)*2+6)
+	args = append(args, sessionMillis, origin, in.ExpectedRevision, preserveEmpty, in.RoomID.String(), roomStateTTLSeconds())
 	for _, p := range in.Participants {
 		value, err := json.Marshal(kvParticipant{UserID: p.UserID, Username: p.Username})
 		if err != nil {
@@ -332,6 +338,7 @@ func (s *kvVoiceRoomState) HydrateRoom(ctx context.Context, in RoomHydration) (H
 		s.revisionKey(in.RoomID),
 		s.awayKey(in.RoomID),
 		s.indexKey(),
+		s.roomsKey(),
 	}
 	reply, err := s.run(ctx, s.scripts.hydrateRoom, keys, args...)
 	if err != nil {
@@ -371,6 +378,93 @@ func (s *kvVoiceRoomState) TouchRoom(ctx context.Context, roomID uuid.UUID) erro
 	for _, key := range []string{s.presenceKey(roomID), s.sessionKey(roomID), s.awayKey(roomID), s.revisionKey(roomID)} {
 		pipe.Expire(ctx, key, roomStateTTL)
 	}
+	pipe.Expire(ctx, s.roomsKey(), roomStateTTL)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (s *kvVoiceRoomState) RoomsWithState(ctx context.Context) ([]uuid.UUID, error) {
+	ctx, cancel := context.WithTimeout(ctx, kvOperationTimeout)
+	defer cancel()
+
+	values, err := s.client.SMembers(ctx, s.roomsKey()).Result()
+	if err != nil {
+		return nil, err
+	}
+	rooms := make([]uuid.UUID, 0, len(values))
+	for _, value := range values {
+		roomID, parseErr := uuid.Parse(value)
+		if parseErr != nil {
+			continue
+		}
+		rooms = append(rooms, roomID)
+	}
+	sort.Slice(rooms, func(i, j int) bool { return rooms[i].String() < rooms[j].String() })
+	return rooms, nil
+}
+
+func (s *kvVoiceRoomState) IndexRoomsFromPresence(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, kvOperationTimeout)
+	defer cancel()
+
+	exists, err := s.client.Exists(ctx, s.roomsKey()).Result()
+	if err != nil || exists > 0 {
+		return 0, err
+	}
+
+	cursor := uint64(0)
+	indexed := 0
+	for {
+		keys, next, err := s.client.Scan(ctx, cursor, s.prefix+":room:*:presence", roomScanBatch).Result()
+		if err != nil {
+			return indexed, err
+		}
+		members := s.roomIDsFromPresenceKeys(keys)
+		if len(members) > 0 {
+			if err := s.addIndexedRooms(ctx, members); err != nil {
+				return indexed, err
+			}
+			indexed += len(members)
+		}
+		cursor = next
+		if cursor == 0 {
+			return indexed, nil
+		}
+	}
+}
+
+func (s *kvVoiceRoomState) roomIDsFromPresenceKeys(keys []string) []any {
+	members := make([]any, 0, len(keys))
+	for _, key := range keys {
+		roomID, ok := s.roomIDFromPresenceKey(key)
+		if !ok {
+			continue
+		}
+		members = append(members, roomID.String())
+	}
+	return members
+}
+
+func (s *kvVoiceRoomState) roomIDFromPresenceKey(key string) (uuid.UUID, bool) {
+	rest, ok := strings.CutPrefix(key, s.prefix+":room:")
+	if !ok {
+		return uuid.Nil, false
+	}
+	raw, ok := strings.CutSuffix(rest, ":presence")
+	if !ok {
+		return uuid.Nil, false
+	}
+	roomID, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return roomID, true
+}
+
+func (s *kvVoiceRoomState) addIndexedRooms(ctx context.Context, members []any) error {
+	pipe := s.client.Pipeline()
+	pipe.SAdd(ctx, s.roomsKey(), members...)
+	pipe.Expire(ctx, s.roomsKey(), roomStateTTL)
 	_, err := pipe.Exec(ctx)
 	return err
 }

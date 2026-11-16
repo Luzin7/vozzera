@@ -2,6 +2,8 @@ package voice
 
 import (
 	"context"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -58,7 +60,7 @@ func TestKVVoiceRoomState_JoinAndLeaveSetRoomKeysTTL(t *testing.T) {
 	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
 	mustJoin(t, state, roomID, participantOf(caller, "sid-caller"), at(0))
 	mustJoin(t, state, roomID, participantOf(other, "sid-other"), at(0))
-	keys := []string{state.presenceKey(roomID), state.sessionKey(roomID), state.revisionKey(roomID)}
+	keys := []string{state.presenceKey(roomID), state.sessionKey(roomID), state.revisionKey(roomID), state.roomsKey()}
 
 	assertRoomKeysTTL(t, client, keys)
 
@@ -90,7 +92,7 @@ func TestKVVoiceRoomState_HydrateWriteRestoresRoomKeysTTL(t *testing.T) {
 	mustJoin(t, state, roomID, participantOf(other, "sid-other"), at(0))
 	mustEnterAway(t, state, newAwayEntry(roomID, forUser(caller)))
 	service := newHydrateService(listerWithParticipants(roomID, participantOf(other, "sid-other"), participantOf(extra, "sid-extra")), state, &lockedPublisher{})
-	keys := roomKeys(state, roomID)
+	keys := append(roomKeys(state, roomID), state.roomsKey())
 
 	for _, key := range keys {
 		if err := client.PExpire(context.Background(), key, 500*time.Millisecond).Err(); err != nil {
@@ -114,7 +116,7 @@ func TestKVVoiceRoomState_HydrateRefreshesRoomKeysTTL(t *testing.T) {
 	mustJoin(t, state, roomID, participants[1], at(0))
 	mustEnterAway(t, state, newAwayEntry(roomID, forUser(caller)))
 	service := newHydrateService(listerWithParticipants(roomID, participants...), state, &lockedPublisher{})
-	keys := roomKeys(state, roomID)
+	keys := append(roomKeys(state, roomID), state.roomsKey())
 
 	mustHydrate(t, service)
 
@@ -154,4 +156,163 @@ func TestEnterAwayService_LiberaOrfaoMesmoComContextoDaConexaoCancelado_KV(t *te
 	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
 
 	runEnterAwayOrphanRelease(t, NewKVVoiceRoomState(client, prefix))
+}
+
+func TestKVVoiceRoomState_FinishRemovesIndexedRoom(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix := "vz:test-" + uuid.NewString()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+
+	ctx := context.Background()
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	roomID := uuid.New()
+	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-a"), at(0))
+
+	if member, err := client.SIsMember(ctx, state.roomsKey(), roomID.String()).Result(); err != nil || !member {
+		t.Fatalf("rooms member = %v, err = %v, want true", member, err)
+	}
+	before := mustPresenceRevision(t, state, roomID)
+	if err := client.PExpire(ctx, state.revisionKey(roomID), 500*time.Millisecond).Err(); err != nil {
+		t.Fatalf("PExpire erro: %v", err)
+	}
+
+	removed, err := state.Finish(ctx, roomID)
+
+	if err != nil {
+		t.Fatalf("Finish erro: %v", err)
+	}
+	if len(removed) != 0 {
+		t.Errorf("removed = %v, want vazio", removed)
+	}
+	for _, key := range []string{state.presenceKey(roomID), state.sessionKey(roomID), state.awayKey(roomID)} {
+		exists, err := client.Exists(ctx, key).Result()
+		if err != nil || exists != 0 {
+			t.Errorf("exists %s = %d, err = %v, want ausente", key, exists, err)
+		}
+	}
+	if member, err := client.SIsMember(ctx, state.roomsKey(), roomID.String()).Result(); err != nil || member {
+		t.Errorf("rooms member = %v, err = %v, want removido", member, err)
+	}
+	if after := mustPresenceRevision(t, state, roomID); after != before+1 {
+		t.Errorf("revision = %d, want %d", after, before+1)
+	}
+	if ttl, err := client.TTL(ctx, state.revisionKey(roomID)).Result(); err != nil || ttl < roomStateTTL-time.Second {
+		t.Errorf("ttl revisão = %v, err = %v, want perto de %v", ttl, err, roomStateTTL)
+	}
+}
+
+func TestKVVoiceRoomState_IndexRoomsFromPresenceSeedsRoomsSet(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix := "vz:test-" + uuid.NewString()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+
+	ctx := context.Background()
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	first, second := uuid.New(), uuid.New()
+	for _, roomID := range []uuid.UUID{first, second} {
+		value := `{"user_id":"` + uuid.NewString() + `","username":"alice"}`
+		if err := client.HSet(ctx, state.presenceKey(roomID), "sid-a", value).Err(); err != nil {
+			t.Fatalf("HSet erro: %v", err)
+		}
+	}
+
+	indexed, err := state.IndexRoomsFromPresence(ctx)
+
+	if err != nil || indexed != 2 {
+		t.Fatalf("indexed = %d, err = %v, want 2", indexed, err)
+	}
+	members, err := client.SMembers(ctx, state.roomsKey()).Result()
+	if err != nil {
+		t.Fatalf("SMembers erro: %v", err)
+	}
+	want := []string{first.String(), second.String()}
+	sort.Strings(members)
+	sort.Strings(want)
+	if !reflect.DeepEqual(members, want) {
+		t.Errorf("members = %v, want %v", members, want)
+	}
+	if ttl, err := client.TTL(ctx, state.roomsKey()).Result(); err != nil || ttl <= 0 {
+		t.Errorf("ttl rooms = %v, err = %v, want positivo", ttl, err)
+	}
+
+	again, err := state.IndexRoomsFromPresence(ctx)
+
+	if err != nil || again != 0 {
+		t.Fatalf("segunda chamada = %d, err = %v, want 0 com o índice já existente", again, err)
+	}
+}
+
+func TestKVVoiceRoomState_HydratePreservedEmptyRoomKeepsRoomsTTL(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix, roomID := "vz:test-"+uuid.NewString(), uuid.New()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-a"), at(0))
+	if err := client.PExpire(context.Background(), state.roomsKey(), 500*time.Millisecond).Err(); err != nil {
+		t.Fatalf("PExpire erro: %v", err)
+	}
+	service := newHydrateService(listerWithParticipants(roomID), state, &lockedPublisher{})
+
+	mustHydrate(t, service)
+
+	assertRoomKeysTTL(t, client, []string{state.roomsKey()})
+}
+
+func TestKVVoiceRoomState_HydrateIndexesRoomWhileRoomsSetExists(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix := "vz:test-" + uuid.NewString()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+
+	ctx := context.Background()
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	joined, hydrated := uuid.New(), uuid.New()
+	mustJoin(t, state, joined, participantOf(uuid.New(), "sid-joined"), at(0))
+	service := newHydrateService(listerWithParticipants(hydrated, participantOf(uuid.New(), "sid-a")), state, &lockedPublisher{})
+
+	mustHydrate(t, service)
+
+	if member, err := client.SIsMember(ctx, state.roomsKey(), hydrated.String()).Result(); err != nil || !member {
+		t.Fatalf("rooms member = %v, err = %v, want sala hidratada indexada", member, err)
+	}
+}
+
+func TestKVVoiceRoomState_LeaveOfLastParticipantRemovesRoomFromIndex(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix := "vz:test-" + uuid.NewString()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+
+	ctx := context.Background()
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	roomID := uuid.New()
+	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-a"), at(0))
+	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-b"), at(0))
+
+	for _, sid := range []string{"sid-a", "sid-b"} {
+		if _, err := state.Leave(ctx, LeaveInput{RoomID: roomID, SID: sid, At: at(0)}); err != nil {
+			t.Fatalf("Leave erro: %v", err)
+		}
+	}
+
+	if member, err := client.SIsMember(ctx, state.roomsKey(), roomID.String()).Result(); err != nil || member {
+		t.Fatalf("rooms member = %v, err = %v, want removido", member, err)
+	}
+}
+
+func TestKVVoiceRoomState_HydrateSecondEmptyObservationRemovesRoomFromIndex(t *testing.T) {
+	client := newKVTestClient(t)
+	prefix := "vz:test-" + uuid.NewString()
+	t.Cleanup(func() { removeKeysWithPrefix(t, client, prefix) })
+
+	ctx := context.Background()
+	state := NewKVVoiceRoomState(client, prefix).(*kvVoiceRoomState)
+	roomID := uuid.New()
+	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-a"), at(0))
+	service := newHydrateService(listerWithParticipants(roomID), state, &lockedPublisher{})
+
+	mustHydrate(t, service)
+	mustHydrate(t, service)
+
+	if member, err := client.SIsMember(ctx, state.roomsKey(), roomID.String()).Result(); err != nil || member {
+		t.Fatalf("rooms member = %v, err = %v, want removido", member, err)
+	}
 }

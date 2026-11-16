@@ -2,6 +2,7 @@ package voice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -67,7 +68,7 @@ func TestHydratePresenceService_PreencheSalasEPublicaSnapshot(t *testing.T) {
 	if got := string(publisher.last().Data); got != `{"started_at":"2023-11-14T22:13:20.123Z"}` {
 		t.Errorf("sessão = %s, want o horário de criação da sala", got)
 	}
-	if !strings.Contains(buf.String(), "voice.hydrate level=info rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=0 touch_failed=0 invalid_rooms=0 duration_ms=") {
+	if !strings.Contains(buf.String(), "voice.hydrate level=info rooms=1 participants=1 empty_pending=0 skipped_budget=0 vanished=0 vanished_pending=0 failed=0 touch_failed=0 invalid_rooms=0 duration_ms=") {
 		t.Errorf("log = %q, want resumo do voice.hydrate", buf.String())
 	}
 }
@@ -177,7 +178,7 @@ func TestHydratePresenceService_IgnoraSalasENomesQueNaoSaoUUID(t *testing.T) {
 	if got := mustSnapshot(t, state, roomID).Participants; len(got) != 1 || got[0].SID != "sid-a" {
 		t.Errorf("participantes = %+v, want só identidades UUID", got)
 	}
-	if !strings.Contains(buf.String(), "rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=0 touch_failed=0 invalid_rooms=1") {
+	if !strings.Contains(buf.String(), "rooms=1 participants=1 empty_pending=0 skipped_budget=0 vanished=0 vanished_pending=0 failed=0 touch_failed=0 invalid_rooms=1") {
 		t.Errorf("log = %q, want invalid_rooms=1", buf.String())
 	}
 }
@@ -234,7 +235,7 @@ func TestHydratePresenceService_FalhaEmUmaSalaContaComoFalhaEContinua(t *testing
 	if len(mustSnapshot(t, state, healthy).Participants) != 1 {
 		t.Error("sala saudável deveria ter sido hidratada")
 	}
-	if !strings.Contains(buf.String(), "rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=1 touch_failed=0 invalid_rooms=0") {
+	if !strings.Contains(buf.String(), "rooms=1 participants=1 empty_pending=0 skipped_budget=0 vanished=0 vanished_pending=0 failed=1 touch_failed=0 invalid_rooms=0") {
 		t.Errorf("log = %q, want failed=1", buf.String())
 	}
 	if !strings.Contains(buf.String(), "voice.hydrate level=error room_id="+broken.String()) {
@@ -256,7 +257,7 @@ func TestHydratePresenceService_TouchFailureCountsInSummary(t *testing.T) {
 		t.Fatalf("Execute erro: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "voice.hydrate level=warn rooms=1 participants=1 empty_pending=0 skipped_budget=0 failed=0 touch_failed=1 invalid_rooms=0") {
+	if !strings.Contains(buf.String(), "voice.hydrate level=warn rooms=1 participants=1 empty_pending=0 skipped_budget=0 vanished=0 vanished_pending=0 failed=0 touch_failed=1 invalid_rooms=0") {
 		t.Errorf("log = %q, want touch_failed=1 no resumo em warn", buf.String())
 	}
 	if !strings.Contains(buf.String(), "voice.room.ttl level=error room_id="+roomID.String()) {
@@ -321,7 +322,188 @@ func TestHydratePresenceService_ContaSalasPuladasPeloOrcamento(t *testing.T) {
 		t.Fatalf("Execute erro: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "rooms=0 participants=0 empty_pending=0 skipped_budget=2 failed=0") {
+	if !strings.Contains(buf.String(), "rooms=0 participants=0 empty_pending=0 skipped_budget=2 vanished=0 vanished_pending=0 failed=0") {
 		t.Errorf("log = %q, want skipped_budget=2", buf.String())
+	}
+}
+
+func TestHydratePresenceService_AnunciaSalaAusenteAposDuasObservacoes(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			publisher := &lockedPublisher{}
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-ghost"), at(0))
+			service := newHydrateService(&fakeRoomLister{}, state, publisher)
+			buf := captureLog(t)
+
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID, "sid-ghost")
+			if got := publisher.types(); len(got) != 0 {
+				t.Fatalf("publicado = %v, want nada na primeira observação", got)
+			}
+			if !strings.Contains(buf.String(), "vanished=0 vanished_pending=1") {
+				t.Errorf("log = %q, want vanished_pending=1", buf.String())
+			}
+
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID)
+			want := []string{realtime.PresenceSnapshot, EventSessionSnapshot}
+			if got := publisher.types(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("publicado = %v, want %v", got, want)
+			}
+			if got := string(publisher.envelopes[0].Data); got != "[]" {
+				t.Errorf("presença = %s, want []", got)
+			}
+			if got := string(publisher.envelopes[1].Data); got != `{"started_at":null}` {
+				t.Errorf("sessão = %s, want started_at null", got)
+			}
+			if !strings.Contains(buf.String(), "vanished=1 vanished_pending=0") {
+				t.Errorf("log = %q, want vanished=1", buf.String())
+			}
+		})
+	}
+}
+
+func TestHydratePresenceService_NaoAnunciaVaziaQuandoSalaVolta(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			publisher := &lockedPublisher{}
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-keep"), at(0))
+			lister := listerWithParticipants(roomID, participantOf(uuid.New(), "sid-keep"))
+			lister.rooms = nil
+			service := newHydrateService(lister, state, publisher)
+
+			mustHydrate(t, service)
+
+			lister.rooms = []LiveKitRoom{{Name: roomID.String(), CreatedAt: time.UnixMilli(sessionCreatedMs)}}
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID, "sid-keep")
+			want := []string{realtime.PresenceSnapshot, EventSessionSnapshot}
+			if got := publisher.types(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("publicado = %v, want %v", got, want)
+			}
+			if got := string(publisher.envelopes[0].Data); !strings.Contains(got, `"sid":"sid-keep"`) {
+				t.Errorf("presença = %s, want sid-keep", got)
+			}
+		})
+	}
+}
+
+func TestHydratePresenceService_NaoApagaSalaListadaComFalhaNosParticipantes(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-present"), at(0))
+			lister := &fakeRoomLister{
+				rooms:          []LiveKitRoom{{Name: roomID.String()}},
+				participantErr: map[string]error{roomID.String(): errors.New("timeout")},
+			}
+			service := newHydrateService(lister, state, &lockedPublisher{})
+			captureLog(t)
+			sawError := false
+			for range 3 {
+				if err := service.Execute(context.Background()); err != nil {
+					sawError = true
+				}
+			}
+
+			assertParticipantSIDs(t, state, roomID, "sid-present")
+			if !sawError {
+				t.Fatal("Execute deveria devolver o erro da sala")
+			}
+		})
+	}
+}
+
+func TestHydratePresenceService_NaoApagaSalaQuandoListRoomsFalha(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-present"), at(0))
+			lister := &fakeRoomLister{listRoomsErr: errors.New("livekit fora")}
+			service := newHydrateService(lister, state, &lockedPublisher{})
+			captureLog(t)
+			sawError := false
+			for range 3 {
+				if err := service.Execute(context.Background()); err != nil {
+					sawError = true
+				}
+			}
+
+			assertParticipantSIDs(t, state, roomID, "sid-present")
+			if !sawError {
+				t.Fatal("Execute deveria devolver o erro do ListRooms")
+			}
+		})
+	}
+}
+
+func TestHydratePresenceService_AnunciaSalaAusenteSemeadaPorHidratacao(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			publisher := &lockedPublisher{}
+			roomID := uuid.New()
+			lister := listerWithParticipants(roomID, participantOf(uuid.New(), "sid-a"))
+			service := newHydrateService(lister, state, publisher)
+
+			mustHydrate(t, service)
+			lister.rooms = nil
+			mustHydrate(t, service)
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID)
+			if got := publisher.types(); len(got) != 4 {
+				t.Fatalf("publicado = %v, want dois anúncios da sala e dois do desaparecimento", got)
+			}
+			if got := string(publisher.last().Data); got != `{"started_at":null}` {
+				t.Errorf("sessão = %s, want started_at null", got)
+			}
+		})
+	}
+}
+
+func TestHydratePresenceService_AnunciaAusenteLimpoAoVarrerSalaAusente(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			publisher := &lockedPublisher{}
+			roomID, awayUser := uuid.New(), uuid.New()
+			mustJoin(t, state, roomID, participantOf(awayUser, "sid-away"), at(0))
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-active"), at(0))
+			mustEnterAway(t, state, newAwayEntry(roomID, forUser(awayUser)))
+			service := newHydrateService(&fakeRoomLister{}, state, publisher)
+			buf := captureLog(t)
+
+			mustHydrate(t, service)
+			mustHydrate(t, service)
+
+			snapshot := mustSnapshot(t, state, roomID)
+			if len(snapshot.Participants) != 0 || len(snapshot.Away) != 0 || snapshot.SessionStartedAt != nil {
+				t.Fatalf("snapshot = %+v, want tudo limpo", snapshot)
+			}
+			want := []string{EventAwaySnapshot, EventAwayEnded, realtime.PresenceSnapshot, EventSessionSnapshot}
+			if got := publisher.types(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("publicado = %v, want %v", got, want)
+			}
+			var payload awayEndedPayload
+			if err := json.Unmarshal(publisher.envelopes[1].Data, &payload); err != nil {
+				t.Fatalf("payload erro: %v", err)
+			}
+			if payload.UserID != awayUser || payload.Reason != AwayEndedRoomEmpty {
+				t.Errorf("away ended = %+v, want user=%s reason=%s", payload, awayUser, AwayEndedRoomEmpty)
+			}
+			if !strings.Contains(buf.String(), "voice.away.cleared user_id="+awayUser.String()+" room_id="+roomID.String()+" cause=room_gone") {
+				t.Errorf("log = %q, want cause=room_gone", buf.String())
+			}
+		})
 	}
 }

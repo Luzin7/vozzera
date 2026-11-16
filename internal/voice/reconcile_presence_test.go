@@ -346,29 +346,6 @@ func TestHydratePresenceService_ConflitoNaoContaComoObservacaoVazia(t *testing.T
 	}
 }
 
-func TestHydratePresenceService_DescartaContagemDeSalaForaDaReconciliacao(t *testing.T) {
-	for _, harness := range reconcileHarnesses() {
-		t.Run(harness.name, func(t *testing.T) {
-			state := harness.state(t)
-			roomID := uuid.New()
-			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-present"), at(0))
-			lister := listerWithParticipants(roomID)
-			lister.participants[roomID.String()] = nil
-			service := newHydrateService(lister, state, &lockedPublisher{})
-
-			mustHydrate(t, service)
-
-			lister.rooms = nil
-			mustHydrate(t, service)
-
-			lister.rooms = []LiveKitRoom{{Name: roomID.String(), CreatedAt: time.UnixMilli(sessionCreatedMs)}}
-			mustHydrate(t, service)
-
-			assertParticipantSIDs(t, state, roomID, "sid-present")
-		})
-	}
-}
-
 func assertAwayEnded(t *testing.T, publisher *lockedPublisher, userID uuid.UUID) {
 	t.Helper()
 

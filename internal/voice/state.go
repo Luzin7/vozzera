@@ -98,5 +98,7 @@ type VoiceRoomState interface {
 	PresenceRevision(ctx context.Context, roomID uuid.UUID) (int64, error)
 	HydrateRoom(ctx context.Context, in RoomHydration) (HydrateResult, error)
 	TouchRoom(ctx context.Context, roomID uuid.UUID) error
+	RoomsWithState(ctx context.Context) ([]uuid.UUID, error)
+	IndexRoomsFromPresence(ctx context.Context) (int, error)
 	Beat(ctx context.Context, instanceID uuid.UUID) (BeatResult, error)
 }
