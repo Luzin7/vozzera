@@ -652,3 +652,63 @@ func TestHydratePresenceService_AnunciaAusenteLimpoAoVarrerSalaAusente(t *testin
 		})
 	}
 }
+
+func TestHydratePresenceService_RecheckPendingLimpaSalaVaziaSemWebhookDeSaida(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-ghost"), at(0))
+			service := newHydrateService(listerWithParticipants(roomID), state, &lockedPublisher{})
+
+			mustHydrate(t, service)
+			assertParticipantSIDs(t, state, roomID, "sid-ghost")
+
+			if err := service.RecheckPending(context.Background()); err != nil {
+				t.Fatalf("RecheckPending erro: %v", err)
+			}
+
+			assertParticipantSIDs(t, state, roomID)
+		})
+	}
+}
+
+func TestHydratePresenceService_RecheckPendingNaoLimpaSobListagemVaziaTransitoria(t *testing.T) {
+	for _, harness := range reconcileHarnesses() {
+		t.Run(harness.name, func(t *testing.T) {
+			state := harness.state(t)
+			roomID := uuid.New()
+			mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-keep"), at(0))
+			lister := listerWithParticipants(roomID)
+			service := newHydrateService(lister, state, &lockedPublisher{})
+
+			mustHydrate(t, service)
+			lister.participants[roomID.String()] = []Participant{participantOf(uuid.New(), "sid-keep")}
+			if err := service.RecheckPending(context.Background()); err != nil {
+				t.Fatalf("RecheckPending erro: %v", err)
+			}
+			lister.participants[roomID.String()] = nil
+			mustHydrate(t, service)
+
+			assertParticipantSIDs(t, state, roomID, "sid-keep")
+		})
+	}
+}
+
+func TestHydratePresenceService_RecheckPendingNaoConsultaSalasNaoPendentes(t *testing.T) {
+	state := newTestState()
+	roomID := uuid.New()
+	lister := listerWithParticipants(roomID, participantOf(uuid.New(), "sid-live"))
+	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-live"), at(0))
+	service := newHydrateService(lister, state, &lockedPublisher{})
+
+	mustHydrate(t, service)
+	lister.visited = nil
+	if err := service.RecheckPending(context.Background()); err != nil {
+		t.Fatalf("RecheckPending erro: %v", err)
+	}
+
+	if len(lister.visited) != 0 {
+		t.Errorf("chamadas ao LiveKit = %v, want nenhuma", lister.visited)
+	}
+}

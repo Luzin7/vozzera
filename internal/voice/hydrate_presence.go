@@ -26,6 +26,7 @@ type HydratePresenceService struct {
 	timeout              time.Duration
 	cursor               int
 	emptyObservations    map[uuid.UUID]int
+	pendingRooms         map[uuid.UUID]LiveKitRoom
 	vanishedObservations map[uuid.UUID]int
 }
 
@@ -36,6 +37,7 @@ func NewHydratePresenceService(lister RoomLister, state VoiceRoomState, publishe
 		events:               newAwayEvents(state, publisher),
 		timeout:              hydrationTimeout,
 		emptyObservations:    make(map[uuid.UUID]int),
+		pendingRooms:         make(map[uuid.UUID]LiveKitRoom),
 		vanishedObservations: make(map[uuid.UUID]int),
 	}
 }
@@ -74,6 +76,51 @@ func (s *HydratePresenceService) Execute(ctx context.Context) error {
 	log.Printf("voice.hydrate level=%s rooms=%d participants=%d empty_pending=%d skipped_budget=%d vanished=%d vanished_pending=%d failed=%d touch_failed=%d invalid_rooms=%d duration_ms=%d",
 		hydrationLogLevel(tally, err), tally.rooms, tally.participants, tally.emptyPending, tally.skippedBudget, tally.vanished, tally.vanishedPending, tally.failed, tally.touchFailed, tally.invalidRooms, time.Since(start).Milliseconds())
 	return err
+}
+
+func (s *HydratePresenceService) RecheckPending(ctx context.Context) error {
+	if len(s.pendingRooms) == 0 {
+		return nil
+	}
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	var failures []error
+	resolved := 0
+	pending := make([]LiveKitRoom, 0, len(s.pendingRooms))
+	for _, room := range s.pendingRooms {
+		pending = append(pending, room)
+	}
+	for _, room := range pending {
+		if ctx.Err() != nil {
+			break
+		}
+		roomID, err := uuid.Parse(room.Name)
+		if err != nil {
+			continue
+		}
+		if _, err := s.reconcileRoom(ctx, room, roomID); err != nil {
+			log.Printf("voice.recheck level=error room_id=%s err=%q", roomID, err)
+			failures = append(failures, fmt.Errorf("sala %s: %w", roomID, err))
+			continue
+		}
+		if _, stillPending := s.pendingRooms[roomID]; !stillPending {
+			resolved++
+		}
+	}
+
+	log.Printf("voice.recheck level=%s pending=%d resolved=%d failed=%d duration_ms=%d",
+		recheckLogLevel(failures), len(pending), resolved, len(failures), time.Since(start).Milliseconds())
+	return errors.Join(failures...)
+}
+
+func recheckLogLevel(failures []error) string {
+	if len(failures) > 0 {
+		return "error"
+	}
+	return "info"
 }
 
 func hydrationLogLevel(tally hydrationTally, err error) string {
@@ -284,9 +331,11 @@ func (s *HydratePresenceService) reconcileRoom(ctx context.Context, room LiveKit
 	s.announcePresence(ctx, roomID, participants, hydrated.SessionStartedAt)
 
 	if s.trackEmptyObservation(roomID, empty, applyEmpty) {
+		s.pendingRooms[roomID] = room
 		result.emptyPending = true
 		return result, nil
 	}
+	delete(s.pendingRooms, roomID)
 	result.participants = len(participants)
 	return result, nil
 }
@@ -359,6 +408,11 @@ func (s *HydratePresenceService) pruneObservations(seen map[uuid.UUID]struct{}) 
 			if _, ok := seen[roomID]; !ok {
 				delete(observations, roomID)
 			}
+		}
+	}
+	for roomID := range s.pendingRooms {
+		if _, ok := seen[roomID]; !ok {
+			delete(s.pendingRooms, roomID)
 		}
 	}
 }

@@ -17,9 +17,14 @@ type awayLeaver interface {
 	Execute(ctx context.Context, in LeaveAwayInput) error
 }
 
+type voiceLeaver interface {
+	Execute(ctx context.Context, in LeaveVoiceInput) error
+}
+
 type AwayHandlerDeps struct {
 	Enter      awayEnterer
 	Leave      awayLeaver
+	LeaveVoice voiceLeaver
 	InstanceID uuid.UUID
 }
 
@@ -45,5 +50,17 @@ func RegisterAwayHandlers(r *ws.Router, deps AwayHandlerDeps) {
 
 	r.Handle(CmdAwayLeave, func(ctx context.Context, c *realtime.Client, _ json.RawMessage) error {
 		return deps.Leave.Execute(ctx, LeaveAwayInput{UserID: c.UserID})
+	})
+
+	r.Handle(CmdVoiceLeave, func(ctx context.Context, c *realtime.Client, data json.RawMessage) error {
+		var cmd struct {
+			RoomID uuid.UUID `json:"room_id"`
+			SID    string    `json:"sid"`
+		}
+		if err := json.Unmarshal(data, &cmd); err != nil {
+			return nil
+		}
+
+		return deps.LeaveVoice.Execute(ctx, LeaveVoiceInput{UserID: c.UserID, RoomID: cmd.RoomID, SID: cmd.SID})
 	})
 }

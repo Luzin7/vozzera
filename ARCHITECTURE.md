@@ -63,7 +63,7 @@ Cada domínio é **auto-contido**: handler, service, queries SQL e código gerad
     state_memory.go        # Implementação só para testes (main.go nunca a referencia)
     webhook.go             # Webhook do LiveKit Cloud, escreve na porta e responde 503 se o KV falha
     enter_away.go          # Um arquivo por caso de uso de ausente: enter, leave, release, sweep
-    handler_ws.go          # Comandos WS voice.away.enter / voice.away.leave
+    handler_ws.go          # Comandos WS voice.away.enter / voice.away.leave / voice.leave
     instance_heartbeat.go  # Batida a cada 10 s; detecta KV zerado e dispara a reidratação
     hydrate_presence.go    # Reidrata a presença a partir da API do LiveKit
 

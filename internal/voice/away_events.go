@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	CmdAwayEnter = "voice.away.enter"
-	CmdAwayLeave = "voice.away.leave"
+	CmdAwayEnter  = "voice.away.enter"
+	CmdAwayLeave  = "voice.away.leave"
+	CmdVoiceLeave = "voice.leave"
 
 	EventAwaySnapshot = "voice.away.snapshot"
 	EventAwayEnded    = "voice.away.ended"
