@@ -50,22 +50,6 @@ func TestLeaveVoiceService_RemoveSoOProprioParticipanteEPublicaUmaVez(t *testing
 	}
 }
 
-func TestLeaveVoiceService_UsuarioNaoRemoveOutroParticipante(t *testing.T) {
-	state := newTestState()
-	service, _, publisher := newLeaveVoiceFixture(state)
-	roomID := uuid.New()
-	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-b"), at(0))
-
-	if err := service.Execute(context.Background(), leaveVoiceInput(roomID, uuid.New(), "sid-b")); err != nil {
-		t.Fatalf("Execute erro: %v", err)
-	}
-
-	assertParticipantSIDs(t, state, roomID, "sid-b")
-	if got := publisher.types(); len(got) != 0 {
-		t.Errorf("publicado = %v, want nada", got)
-	}
-}
-
 func TestLeaveVoiceService_WebhookDeSaidaDepoisNaoRepublica(t *testing.T) {
 	state := newTestState()
 	service, leaves, publisher := newLeaveVoiceFixture(state)
@@ -163,56 +147,6 @@ func TestLeaveVoiceService_RemoveSoOSIDNomeadoDoMesmoUsuario(t *testing.T) {
 	assertParticipantSIDs(t, state, roomID, "sid-a2")
 }
 
-func TestLeaveVoiceService_IgnoraSIDDeOutroUsuario(t *testing.T) {
-	state := newTestState()
-	service, _, publisher := newLeaveVoiceFixture(state)
-	roomID := uuid.New()
-	mustJoin(t, state, roomID, participantOf(uuid.New(), "sid-b"), at(0))
-
-	if err := service.Execute(context.Background(), leaveVoiceInput(roomID, uuid.New(), "sid-b")); err != nil {
-		t.Fatalf("Execute erro: %v", err)
-	}
-
-	assertParticipantSIDs(t, state, roomID, "sid-b")
-	if got := publisher.types(); len(got) != 0 {
-		t.Errorf("publicado = %v, want nada", got)
-	}
-}
-
-func TestLeaveVoiceService_SIDAusenteNaoRemoveNinguem(t *testing.T) {
-	state := newTestState()
-	service, _, _ := newLeaveVoiceFixture(state)
-	roomID, alice := uuid.New(), uuid.New()
-	mustJoin(t, state, roomID, participantOf(alice, "sid-a"), at(0))
-
-	if err := service.Execute(context.Background(), leaveVoiceInput(roomID, alice, "")); err != nil {
-		t.Fatalf("Execute erro: %v", err)
-	}
-
-	assertParticipantSIDs(t, state, roomID, "sid-a")
-}
-
-func TestLeaveVoiceService_SaidaAtrasadaDeSIDAntigoNaoAfetaSIDNovo(t *testing.T) {
-	state := newTestState()
-	service, _, _ := newLeaveVoiceFixture(state)
-	roomID, alice := uuid.New(), uuid.New()
-	mustJoin(t, state, roomID, participantOf(alice, "sid-new"), at(0))
-
-	if err := service.Execute(context.Background(), leaveVoiceInput(roomID, alice, "sid-old")); err != nil {
-		t.Fatalf("Execute erro: %v", err)
-	}
-
-	assertParticipantSIDs(t, state, roomID, "sid-new")
-}
-
-type failingSnapshotState struct {
-	VoiceRoomState
-}
-
-func (failingSnapshotState) Snapshot(context.Context, uuid.UUID) (RoomSnapshot, error) {
-	return RoomSnapshot{}, errKVDown
-}
-
 func TestLeaveVoiceService_FalhaNoSnapshotNaoConsomeJanelaDeRepeticao(t *testing.T) {
 	state := newTestState()
 	roomID, alice := uuid.New(), uuid.New()
@@ -229,4 +163,50 @@ func TestLeaveVoiceService_FalhaNoSnapshotNaoConsomeJanelaDeRepeticao(t *testing
 	}
 
 	assertParticipantSIDs(t, state, roomID)
+}
+
+func assertLeaveVoiceIsNoop(t *testing.T, owner uuid.UUID, ownerSID string, in func(roomID uuid.UUID) LeaveVoiceInput) {
+	t.Helper()
+	state := newTestState()
+	service, _, publisher := newLeaveVoiceFixture(state)
+	roomID := uuid.New()
+	mustJoin(t, state, roomID, participantOf(owner, ownerSID), at(0))
+
+	if err := service.Execute(context.Background(), in(roomID)); err != nil {
+		t.Fatalf("Execute erro: %v", err)
+	}
+
+	assertParticipantSIDs(t, state, roomID, ownerSID)
+	if got := publisher.types(); len(got) != 0 {
+		t.Errorf("publicado = %v, want nada", got)
+	}
+}
+
+func TestLeaveVoiceService_IgnoraSIDDeOutroUsuario(t *testing.T) {
+	owner := uuid.New()
+	assertLeaveVoiceIsNoop(t, owner, "sid-b", func(roomID uuid.UUID) LeaveVoiceInput {
+		return leaveVoiceInput(roomID, uuid.New(), "sid-b")
+	})
+}
+
+func TestLeaveVoiceService_SIDAusenteNaoRemoveNinguem(t *testing.T) {
+	owner := uuid.New()
+	assertLeaveVoiceIsNoop(t, owner, "sid-a", func(roomID uuid.UUID) LeaveVoiceInput {
+		return leaveVoiceInput(roomID, owner, "")
+	})
+}
+
+func TestLeaveVoiceService_SaidaAtrasadaDeSIDAntigoNaoAfetaSIDNovo(t *testing.T) {
+	owner := uuid.New()
+	assertLeaveVoiceIsNoop(t, owner, "sid-new", func(roomID uuid.UUID) LeaveVoiceInput {
+		return leaveVoiceInput(roomID, owner, "sid-old")
+	})
+}
+
+type failingSnapshotState struct {
+	VoiceRoomState
+}
+
+func (failingSnapshotState) Snapshot(context.Context, uuid.UUID) (RoomSnapshot, error) {
+	return RoomSnapshot{}, errKVDown
 }
