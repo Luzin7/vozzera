@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -24,6 +25,7 @@ type UserClaims struct {
 	Username  string
 	Role      string
 	SessionID uuid.UUID
+	ExpiresAt time.Time
 }
 
 func (c UserClaims) CanModerate() bool {

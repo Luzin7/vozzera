@@ -22,7 +22,7 @@ type recordingRevalidator struct {
 	err   func() error
 }
 
-func (r *recordingRevalidator) RevalidateSession(context.Context, uuid.UUID) error {
+func (r *recordingRevalidator) RevalidateSession(context.Context, uuid.UUID) (time.Time, error) {
 	r.calls.Add(1)
 	if r.ticks != nil {
 		select {
@@ -31,9 +31,9 @@ func (r *recordingRevalidator) RevalidateSession(context.Context, uuid.UUID) err
 		}
 	}
 	if r.err == nil {
-		return nil
+		return time.Time{}, nil
 	}
-	return r.err()
+	return time.Time{}, r.err()
 }
 
 func TestNewHandler_RequiresRevokerWithRevalidation(t *testing.T) {
@@ -118,20 +118,76 @@ func TestClient_InfrastructureErrorKeepsConnectionOpen(t *testing.T) {
 	}
 }
 
+func TestClient_MaxConnectionAgeClosesWithNormalClosure(t *testing.T) {
+	hub := realtime.NewHub()
+	go hub.Run()
+	t.Cleanup(func() { hub.Shutdown(context.Background()) })
+
+	conn := connectSocket(t, hub, HandlerDeps{MaxConnectionAge: 30 * time.Millisecond})
+
+	assertCloseCode(t, conn, websocket.CloseNormalClosure)
+}
+
+type closedHookRecorder struct {
+	closed chan uuid.UUID
+}
+
+func (r *closedHookRecorder) HandleConnectionClosed(c *realtime.Client) {
+	r.closed <- c.ConnID
+}
+
+func TestClient_MaxConnectionAgeCloseFiresClosedHook(t *testing.T) {
+	hub := realtime.NewHub()
+	hook := &closedHookRecorder{closed: make(chan uuid.UUID, 1)}
+	hub.AddConnectionClosedHook(hook)
+	go hub.Run()
+	t.Cleanup(func() { hub.Shutdown(context.Background()) })
+
+	connectSocket(t, hub, HandlerDeps{MaxConnectionAge: 30 * time.Millisecond})
+
+	select {
+	case <-hook.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("hook de conexão fechada não executou após fechamento por idade")
+	}
+}
+
+func TestClient_WithoutMaxConnectionAgeStaysOpen(t *testing.T) {
+	hub := realtime.NewHub()
+	go hub.Run()
+	t.Cleanup(func() { hub.Shutdown(context.Background()) })
+
+	conn := connectSocket(t, hub, HandlerDeps{})
+
+	if err := conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond)); err != nil {
+		t.Fatalf("SetReadDeadline erro: %v", err)
+	}
+	_, _, err := conn.ReadMessage()
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		t.Fatalf("conexão fechada sem limite de idade: %v", err)
+	}
+}
+
 func connectRevalidatingSocket(t *testing.T, hub *realtime.Hub, revalidator realtime.SessionRevalidator, interval time.Duration) *websocket.Conn {
 	t.Helper()
-	subscribed := make(chan struct{})
-	handler, err := NewHandler(HandlerDeps{
-		Registerer:        hub,
-		Router:            NewRouter(),
-		SnapshotProviders: []SnapshotProvider{subscribeBarrier(subscribed)},
-		AllowedOrigins:    []string{testOrigin},
+	return connectSocket(t, hub, HandlerDeps{
 		SessionRevalidation: realtime.SessionRevalidation{
 			Revalidator: revalidator,
 			Revoker:     hub,
 			Interval:    interval,
 		},
 	})
+}
+
+func connectSocket(t *testing.T, hub *realtime.Hub, deps HandlerDeps) *websocket.Conn {
+	t.Helper()
+	subscribed := make(chan struct{})
+	deps.Registerer = hub
+	deps.Router = NewRouter()
+	deps.SnapshotProviders = []SnapshotProvider{subscribeBarrier(subscribed)}
+	deps.AllowedOrigins = []string{testOrigin}
+	handler, err := NewHandler(deps)
 	if err != nil {
 		t.Fatalf("NewHandler erro: %v", err)
 	}

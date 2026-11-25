@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/Luzin7/vozzera-backend/internal/shared/httpx"
 	"github.com/Luzin7/vozzera-backend/internal/shared/realtime"
@@ -19,6 +20,7 @@ type HandlerDeps struct {
 	SnapshotProviders   []SnapshotProvider
 	AllowedOrigins      []string
 	SessionRevalidation realtime.SessionRevalidation
+	MaxConnectionAge    time.Duration
 }
 
 type Handler struct {
@@ -27,6 +29,7 @@ type Handler struct {
 	snapshotProviders   []SnapshotProvider
 	allowedOrigins      []string
 	sessionRevalidation realtime.SessionRevalidation
+	maxConnectionAge    time.Duration
 	upgrader            websocket.Upgrader
 }
 
@@ -41,6 +44,7 @@ func NewHandler(deps HandlerDeps) (*Handler, error) {
 		snapshotProviders:   deps.SnapshotProviders,
 		allowedOrigins:      deps.AllowedOrigins,
 		sessionRevalidation: deps.SessionRevalidation,
+		maxConnectionAge:    deps.MaxConnectionAge,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
@@ -74,6 +78,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		claims.UserID, claims.Username,
 		claims.SessionID, h.router,
 		realtime.WithSessionRevalidation(h.sessionRevalidation),
+		realtime.WithSessionExpiry(claims.ExpiresAt),
+		realtime.WithMaxAge(h.maxConnectionAge),
 	)
 
 	h.registerer.Register(client)

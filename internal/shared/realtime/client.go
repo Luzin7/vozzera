@@ -29,6 +29,9 @@ type Client struct {
 	Topics              map[Topic]bool
 	Handler             InboundHandler
 	sessionRevalidation SessionRevalidation
+	sessionExpiresAt    time.Time
+	sessionMonitor      *sessionMonitor
+	maxAge              time.Duration
 	context             context.Context
 	ctxCancel           context.CancelFunc
 	closeCode           int
@@ -39,6 +42,18 @@ type ClientOption func(*Client)
 func WithSessionRevalidation(revalidation SessionRevalidation) ClientOption {
 	return func(c *Client) {
 		c.sessionRevalidation = revalidation
+	}
+}
+
+func WithSessionExpiry(expiresAt time.Time) ClientOption {
+	return func(c *Client) {
+		c.sessionExpiresAt = expiresAt
+	}
+}
+
+func WithMaxAge(maxAge time.Duration) ClientOption {
+	return func(c *Client) {
+		c.maxAge = maxAge
 	}
 }
 
@@ -61,6 +76,8 @@ func NewClient(registerer Registerer, conn *websocket.Conn, userID uuid.UUID, us
 	for _, opt := range opts {
 		opt(client)
 	}
+
+	client.sessionMonitor = newSessionMonitor(client.sessionRevalidation, client.SessionID, client.sessionExpiresAt, time.Now)
 
 	return client
 }
@@ -117,6 +134,13 @@ func (c *Client) WritePump() {
 		c.conn.Close()
 	}()
 
+	maxAgeTimer, maxAgeExpired := c.maxAgeTimer()
+	defer func() {
+		if maxAgeTimer != nil {
+			maxAgeTimer.Stop()
+		}
+	}()
+
 	revalidateTicker, revalidate := c.sessionRevalidateTicker()
 	defer func() {
 		if revalidateTicker != nil {
@@ -147,6 +171,10 @@ func (c *Client) WritePump() {
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
+		case <-maxAgeExpired:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			return
 		case <-revalidate:
 			if c.sessionValid() {
 				continue
@@ -154,6 +182,15 @@ func (c *Client) WritePump() {
 			c.revokeSession()
 		}
 	}
+}
+
+func (c *Client) maxAgeTimer() (*time.Timer, <-chan time.Time) {
+	if c.maxAge <= 0 {
+		return nil, nil
+	}
+
+	timer := time.NewTimer(c.maxAge)
+	return timer, timer.C
 }
 
 func (c *Client) sessionRevalidateTicker() (*time.Ticker, <-chan time.Time) {
@@ -169,16 +206,7 @@ func (c *Client) sessionValid() bool {
 	ctx, cancel := context.WithTimeout(c.context, sessionRevalidateTimeout)
 	defer cancel()
 
-	err := c.sessionRevalidation.Revalidator.RevalidateSession(ctx, c.SessionID)
-	if err == nil {
-		return true
-	}
-	if IsSessionInvalid(err) {
-		return false
-	}
-
-	log.Printf("falha ao revalidar sessão do websocket %s: %v", c.ConnID, err)
-	return true
+	return c.sessionMonitor.Valid(ctx, c.ConnID)
 }
 
 func (c *Client) revokeSession() {

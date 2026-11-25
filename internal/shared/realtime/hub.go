@@ -37,6 +37,7 @@ type Hub struct {
 	revokeUser  chan uuid.UUID
 	revokeTopic chan Topic
 	sync        chan chan struct{}
+	sessionIDs  chan chan []uuid.UUID
 	stop        chan struct{}
 	done        chan struct{}
 }
@@ -54,6 +55,7 @@ func NewHub() *Hub {
 		revokeUser:  make(chan uuid.UUID),
 		revokeTopic: make(chan Topic),
 		sync:        make(chan chan struct{}),
+		sessionIDs:  make(chan chan []uuid.UUID),
 		stop:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
@@ -179,6 +181,25 @@ func (h *Hub) RevokeTopic(ctx context.Context, topic Topic) error {
 	}
 }
 
+func (h *Hub) SessionIDs(ctx context.Context) ([]uuid.UUID, error) {
+	reply := make(chan []uuid.UUID, 1)
+
+	select {
+	case h.sessionIDs <- reply:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-h.done:
+		return nil, ErrHubClosed
+	}
+
+	select {
+	case ids := <-reply:
+		return ids, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func (h *Hub) Sync(ctx context.Context) error {
 	replyChan := make(chan struct{})
 
@@ -233,6 +254,19 @@ func (h *Hub) removeClient(c *Client, closeCode int) {
 	}
 }
 
+func (h *Hub) connectedSessionIDs() []uuid.UUID {
+	seen := make(map[uuid.UUID]bool, len(h.clients))
+	ids := make([]uuid.UUID, 0, len(h.clients))
+	for client := range h.clients {
+		if seen[client.SessionID] {
+			continue
+		}
+		seen[client.SessionID] = true
+		ids = append(ids, client.SessionID)
+	}
+	return ids
+}
+
 func (h *Hub) drain() {
 	for client := range h.clients {
 		h.removeClient(client, websocket.CloseGoingAway)
@@ -263,6 +297,9 @@ func (h *Hub) Run() {
 
 		case userID := <-h.revokeUser:
 			h.removeClientsWhere(func(c *Client) bool { return c.UserID == userID }, CloseSessionRevoked)
+
+		case reply := <-h.sessionIDs:
+			reply <- h.connectedSessionIDs()
 
 		case topic := <-h.revokeTopic:
 			for client := range h.topics[topic] {

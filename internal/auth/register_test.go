@@ -12,7 +12,7 @@ import (
 )
 
 func TestRegisterService_Execute_Validation(t *testing.T) {
-	svc := NewRegisterService(newFakeRepo(), "invite")
+	svc := NewRegisterService(newFakeRepo(), "invite", &userObserverRecorder{})
 
 	tests := []struct {
 		name   string
@@ -54,6 +54,31 @@ func TestRegisterService_Execute_Validation(t *testing.T) {
 	}
 }
 
+type userObserverRecorder struct {
+	created int
+}
+
+func (r *userObserverRecorder) UserCreated(context.Context) { r.created++ }
+
+func TestRegisterService_Execute_NotifiesObserverOnlyOnSuccess(t *testing.T) {
+	repo := newFakeRepo()
+	repo.createUser = func(context.Context, CreateUserParams) (CreateUserRow, error) {
+		return CreateUserRow{}, errors.New("falha")
+	}
+	observer := &userObserverRecorder{}
+
+	_, err := NewRegisterService(repo, "invite", observer).Execute(context.Background(), RegisterInput{
+		Username: "luand", Password: "secret123", Email: "luan@example.com", InviteCode: "invite",
+	})
+
+	if err == nil {
+		t.Fatal("Execute() deveria falhar")
+	}
+	if observer.created != 0 {
+		t.Errorf("created = %d, want 0", observer.created)
+	}
+}
+
 func TestRegisterService_Execute_Success(t *testing.T) {
 	repo := newFakeRepo()
 	var got CreateUserParams
@@ -62,7 +87,8 @@ func TestRegisterService_Execute_Success(t *testing.T) {
 		return CreateUserRow{ID: uuid.New(), Username: arg.Username}, nil
 	}
 
-	svc := NewRegisterService(repo, "invite")
+	observer := &userObserverRecorder{}
+	svc := NewRegisterService(repo, "invite", observer)
 
 	out, err := svc.Execute(context.Background(), RegisterInput{
 		Username:   "  luand  ",
@@ -85,6 +111,9 @@ func TestRegisterService_Execute_Success(t *testing.T) {
 	}
 	if out.Username != "luand" {
 		t.Errorf("out.Username = %q, want %q", out.Username, "luand")
+	}
+	if observer.created != 1 {
+		t.Errorf("created = %d, want 1", observer.created)
 	}
 }
 
@@ -127,7 +156,7 @@ func TestRegisterService_Execute_CreateUserFailure(t *testing.T) {
 			repo.createUser = func(context.Context, CreateUserParams) (CreateUserRow, error) {
 				return CreateUserRow{}, tt.repoErr
 			}
-			svc := NewRegisterService(repo, "invite")
+			svc := NewRegisterService(repo, "invite", &userObserverRecorder{})
 
 			_, err := svc.Execute(context.Background(), RegisterInput{
 				Username: "luand", Password: "secret123", Email: "luan@example.com", InviteCode: "invite",

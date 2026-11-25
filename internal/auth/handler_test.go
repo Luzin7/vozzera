@@ -16,9 +16,10 @@ func newAuthMux(t *testing.T, repo *fakeRepo) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
 	RegisterHandlers(mux, AuthDeps{
-		Repo:       repo,
-		SessionTTL: time.Hour,
-		Revoker:    &revokeRecorder{},
+		Repo:         repo,
+		SessionTTL:   time.Hour,
+		Revoker:      &revokeRecorder{},
+		UserObserver: &userObserverRecorder{},
 		AuthMW: httpx.Auth(func(context.Context, string) (httpx.UserClaims, error) {
 			return httpx.UserClaims{UserID: uuid.New(), SessionID: uuid.New()}, nil
 		}),

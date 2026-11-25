@@ -30,10 +30,11 @@ type RegisterOutput struct {
 type RegisterService struct {
 	repo       Repository
 	inviteCode string
+	observer   UserObserver
 }
 
-func NewRegisterService(repo Repository, inviteCode string) *RegisterService {
-	return &RegisterService{repo: repo, inviteCode: inviteCode}
+func NewRegisterService(repo Repository, inviteCode string, observer UserObserver) *RegisterService {
+	return &RegisterService{repo: repo, inviteCode: inviteCode, observer: observer}
 }
 
 func (s *RegisterService) Execute(ctx context.Context, in RegisterInput) (RegisterOutput, error) {
@@ -68,6 +69,8 @@ func (s *RegisterService) Execute(ctx context.Context, in RegisterInput) (Regist
 	if err != nil {
 		return RegisterOutput{}, mapCreateUserError(err)
 	}
+
+	s.observer.UserCreated(ctx)
 
 	return RegisterOutput{ID: user.ID, Username: user.Username}, nil
 }

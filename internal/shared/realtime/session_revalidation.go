@@ -9,7 +9,7 @@ import (
 )
 
 type SessionRevalidator interface {
-	RevalidateSession(ctx context.Context, sessionID uuid.UUID) error
+	RevalidateSession(ctx context.Context, sessionID uuid.UUID) (time.Time, error)
 }
 
 type SessionRevoker interface {
@@ -19,6 +19,7 @@ type SessionRevoker interface {
 type SessionRevalidation struct {
 	Revalidator SessionRevalidator
 	Revoker     SessionRevoker
+	TouchWindow time.Duration
 	Interval    time.Duration
 }
 

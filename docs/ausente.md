@@ -89,7 +89,7 @@ Entradas de uma instância morta duram menos de 60 s. Um reinício do KV Free es
 
 ## Conexões com o KV
 
-Cada instância usa no máximo 7 conexões (pool de 5 mais pool de pipeline de 2; o padrão do go-redis v9.23 seria 10 extras). Durante a sobreposição de deploy são 14, bem abaixo das 50 do plano Free.
+Cada instância usa no máximo 9 conexões (pool de 5, pool de pipeline de 2 e 2 assinantes pub/sub; o padrão do go-redis v9.23 seria 10 extras no pipeline). Durante a sobreposição de deploy são 18, bem abaixo das 50 do plano Free.
 
 ## Ordem de deploy
 

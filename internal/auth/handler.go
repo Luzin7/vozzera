@@ -42,6 +42,7 @@ type AuthDeps struct {
 	AppURL           string
 	Mailer           MailSender
 	Revoker          SessionRevoker
+	UserObserver     UserObserver
 	AuthMW           func(http.Handler) http.Handler
 }
 
@@ -57,7 +58,7 @@ type Handler struct {
 
 func RegisterHandlers(mux *http.ServeMux, deps AuthDeps) {
 	h := &Handler{
-		register:             NewRegisterService(deps.Repo, deps.InviteCode),
+		register:             NewRegisterService(deps.Repo, deps.InviteCode, deps.UserObserver),
 		login:                NewLoginService(deps.Repo, deps.SessionTTL),
 		me:                   NewMeService(deps.Repo),
 		logout:               NewLogoutService(deps.Repo, deps.Revoker),
