@@ -28,6 +28,7 @@ Cliente para servidor:
 |---|---|---|
 | `voice.away.enter` | `room:<room_id>` | `{"room_id":"<uuid>","reason":"idle"\|"connection"}` |
 | `voice.away.leave` | `__presence__` | `{}` |
+| `voice.leave` | `room:<room_id>` | `{"room_id":"<uuid>","sid":"<sid da sessão LiveKit>"}` |
 
 O servidor nunca lê `user_id` do payload: usa o usuário e a conexão da sessão WebSocket.
 

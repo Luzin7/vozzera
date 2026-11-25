@@ -70,7 +70,7 @@ func serveWebhook(handler *WebhookHandler, req *http.Request) int {
 
 func newWebhookFixture(state VoiceRoomState) (*WebhookHandler, *lockedPublisher) {
 	publisher := &lockedPublisher{}
-	return NewWebhookHandler(webhookKey, webhookSecret, state, publisher), publisher
+	return NewWebhookHandler(webhookKey, webhookSecret, state, publisher, NewRecentLeaves()), publisher
 }
 
 func joinedSpec(roomID, userID uuid.UUID, sid string, createdAt int64) webhookEventSpec {

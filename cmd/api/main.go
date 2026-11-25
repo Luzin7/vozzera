@@ -248,9 +248,11 @@ func main() {
 		},
 	})
 
+	recentLeaves := voice.NewRecentLeaves()
 	voice.RegisterAwayHandlers(wsRouter, voice.AwayHandlerDeps{
 		Enter:      voice.NewEnterAwayService(voiceState, room.NewRoomAuthorizer(roomQueries), hub),
 		Leave:      voice.NewLeaveAwayService(voiceState, hub),
+		LeaveVoice: voice.NewLeaveVoiceService(voiceState, hub, recentLeaves),
 		InstanceID: instanceID,
 	})
 
@@ -263,6 +265,7 @@ func main() {
 		ApiSecret:  cfg.LiveKitAPISecret,
 		State:      voiceState,
 		Publisher:  hub,
+		Leaves:     recentLeaves,
 	})
 	swagger.RegisterHandlers(mux, swagger.HandlerConfig{
 		Enabled:  cfg.SwaggerEnabled,

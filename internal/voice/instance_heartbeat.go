@@ -18,6 +18,7 @@ const (
 
 type presenceHydrator interface {
 	Execute(ctx context.Context) error
+	RecheckPending(ctx context.Context) error
 }
 
 type InstanceHeartbeatDeps struct {
@@ -89,9 +90,20 @@ func (h *InstanceHeartbeat) tick(ctx context.Context) {
 		h.events.publishResync(ctx)
 		return
 	}
-	if h.hydrationDue() && h.hydrate(ctx) {
+	if !h.hydrationDue() {
+		h.recheckPending(ctx)
+		return
+	}
+	if h.hydrate(ctx) {
 		h.events.publishResync(ctx)
 	}
+}
+
+func (h *InstanceHeartbeat) recheckPending(ctx context.Context) {
+	if h.hydrationBackoff > 0 {
+		return
+	}
+	_ = h.hydrator.RecheckPending(ctx)
 }
 
 func (h *InstanceHeartbeat) hydrationDue() bool {

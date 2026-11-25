@@ -20,14 +20,19 @@ type WebhookHandler struct {
 	state       VoiceRoomState
 	publisher   realtime.Publisher
 	events      *awayEvents
+	leaves      *RecentLeaves
 }
 
-func NewWebhookHandler(apiKey, apiSecret string, state VoiceRoomState, publisher realtime.Publisher) *WebhookHandler {
+func NewWebhookHandler(apiKey, apiSecret string, state VoiceRoomState, publisher realtime.Publisher, leaves *RecentLeaves) *WebhookHandler {
+	if leaves == nil {
+		leaves = NewRecentLeaves()
+	}
 	return &WebhookHandler{
 		keyProvider: auth.NewSimpleKeyProvider(apiKey, apiSecret),
 		state:       state,
 		publisher:   publisher,
 		events:      newAwayEvents(state, publisher),
+		leaves:      leaves,
 	}
 }
 
@@ -42,6 +47,7 @@ func participantFromEvent(p *livekit.ParticipantInfo) Participant {
 func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes)
 
+	receivedAt := time.Now()
 	event, err := webhook.ReceiveWebhookEvent(r, h.keyProvider)
 	if err != nil {
 		http.Error(w, "failed to receive webhook event: "+err.Error(), http.StatusBadRequest)
@@ -62,6 +68,7 @@ func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logWebhookPublished(log.Default(), roomID.String(), event, receivedAt, time.Now())
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -115,6 +122,10 @@ func (h *WebhookHandler) handleLeft(ctx context.Context, roomID uuid.UUID, event
 	result, err := h.state.Leave(ctx, LeaveInput{RoomID: roomID, SID: p.SID, At: unixMillis(event.GetCreatedAt()), RoomCreatedAt: roomCreationTime(event.GetRoom())})
 	if err != nil {
 		return err
+	}
+
+	if !result.Left && h.leaves.Consume(p.SID) {
+		return nil
 	}
 
 	h.events.publishPresence(ctx, roomID, realtime.PresenceLeft, result.Participants)

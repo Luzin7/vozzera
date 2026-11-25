@@ -47,7 +47,7 @@ func TestParticipantFromEvent(t *testing.T) {
 func TestNewWebhookHandler(t *testing.T) {
 	state := newTestState()
 	publisher := &voiceFakePublisher{}
-	handler := NewWebhookHandler("api-key", "api-secret", state, publisher)
+	handler := NewWebhookHandler("api-key", "api-secret", state, publisher, NewRecentLeaves())
 
 	if handler == nil {
 		t.Fatal("NewWebhookHandler retornou nil")
@@ -63,7 +63,7 @@ func TestNewWebhookHandler(t *testing.T) {
 func TestWebhookHandler_Handle_EventoDesconhecido(t *testing.T) {
 	state := newTestState()
 	publisher := &voiceFakePublisher{}
-	handler := NewWebhookHandler("test-key", "test-secret", state, publisher)
+	handler := NewWebhookHandler("test-key", "test-secret", state, publisher, NewRecentLeaves())
 
 	body := map[string]interface{}{
 		"event": "some.random.event",
@@ -88,7 +88,7 @@ func TestWebhookHandler_Handle_EventoDesconhecido(t *testing.T) {
 func TestWebhookHandler_Handle_PayloadMalFormado(t *testing.T) {
 	state := newTestState()
 	publisher := &voiceFakePublisher{}
-	handler := NewWebhookHandler("test-key", "test-secret", state, publisher)
+	handler := NewWebhookHandler("test-key", "test-secret", state, publisher, NewRecentLeaves())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/voice/webhook", strings.NewReader("not-json"))
 	req.Header.Set("Content-Type", "application/json")

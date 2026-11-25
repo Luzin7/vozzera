@@ -22,6 +22,7 @@ type VoiceDeps struct {
 	ApiSecret  string
 	State      VoiceRoomState
 	Publisher  realtime.Publisher
+	Leaves     *RecentLeaves
 }
 
 type Handler struct {
@@ -32,7 +33,7 @@ type Handler struct {
 func RegisterHandlers(mux *http.ServeMux, deps VoiceDeps) {
 	h := &Handler{
 		token:   NewTokenService(deps.Access, deps.Issuer, deps.LiveKitURL),
-		webhook: NewWebhookHandler(deps.ApiKey, deps.ApiSecret, deps.State, deps.Publisher),
+		webhook: NewWebhookHandler(deps.ApiKey, deps.ApiSecret, deps.State, deps.Publisher, deps.Leaves),
 	}
 
 	mux.Handle("POST /api/voice/token", deps.AuthMW(http.HandlerFunc(h.handleToken)))

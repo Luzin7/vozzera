@@ -29,6 +29,7 @@ func (s *beatingState) Beat(context.Context, uuid.UUID) (BeatResult, error) {
 
 type countingHydrator struct {
 	calls    atomic.Int32
+	rechecks atomic.Int32
 	failures int32
 }
 
@@ -36,6 +37,11 @@ func (h *countingHydrator) Execute(context.Context) error {
 	if h.calls.Add(1) <= h.failures {
 		return errKVDown
 	}
+	return nil
+}
+
+func (h *countingHydrator) RecheckPending(context.Context) error {
+	h.rechecks.Add(1)
 	return nil
 }
 
@@ -304,5 +310,44 @@ func TestInstanceHeartbeat_HidratacaoNoWipeSemFalhaPublicaUmResyncSo(t *testing.
 
 	if got := heartbeatPublisher.types(); len(got) != 1 {
 		t.Errorf("publicado = %v, want um resync", got)
+	}
+}
+
+func TestInstanceHeartbeat_ReconfereSalasPendentesNosTicksEntreCiclos(t *testing.T) {
+	hydrator := &countingHydrator{}
+	heartbeat := newHeartbeat(&beatingState{results: []beatOutcome{{}}}, hydrator, false)
+	now := time.Unix(1000, 0)
+	heartbeat.now = func() time.Time { return now }
+
+	heartbeat.tick(context.Background())
+	now = now.Add(heartbeatInterval)
+	heartbeat.tick(context.Background())
+
+	if hydrator.calls.Load() != 1 || hydrator.rechecks.Load() != 1 {
+		t.Errorf("hidratações = %d, reconferências = %d, want 1 e 1", hydrator.calls.Load(), hydrator.rechecks.Load())
+	}
+}
+
+func TestInstanceHeartbeat_NaoReconferePendentesDuranteBackoffDeHidratacao(t *testing.T) {
+	hydrator := &countingHydrator{failures: 1}
+	heartbeat := newHeartbeat(&beatingState{results: []beatOutcome{{}}}, hydrator, false)
+	now := time.Unix(1000, 0)
+	heartbeat.now = func() time.Time { return now }
+
+	heartbeat.tick(context.Background())
+	now = now.Add(heartbeatInterval / 2)
+	heartbeat.tick(context.Background())
+
+	if hydrator.rechecks.Load() != 0 {
+		t.Fatalf("reconferências em backoff = %d, want 0", hydrator.rechecks.Load())
+	}
+
+	now = now.Add(heartbeatInterval / 2)
+	heartbeat.tick(context.Background())
+	now = now.Add(heartbeatInterval)
+	heartbeat.tick(context.Background())
+
+	if hydrator.calls.Load() != 2 || hydrator.rechecks.Load() != 1 {
+		t.Errorf("hidratações = %d, reconferências = %d, want 2 e 1", hydrator.calls.Load(), hydrator.rechecks.Load())
 	}
 }

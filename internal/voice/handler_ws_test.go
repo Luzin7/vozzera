@@ -82,3 +82,9 @@ func TestAwayHandlers_LeaveUsaUsuarioDaSessao(t *testing.T) {
 		t.Fatalf("err = %v, inputs = %+v, want o usuário da sessão", err, leaver.inputs)
 	}
 }
+
+func newAwayRouterWithVoiceLeaver(leaver voiceLeaver) *ws.Router {
+	router := ws.NewRouter()
+	RegisterAwayHandlers(router, AwayHandlerDeps{Enter: &recordingEnterer{}, Leave: &recordingLeaver{}, LeaveVoice: leaver, InstanceID: uuid.New()})
+	return router
+}

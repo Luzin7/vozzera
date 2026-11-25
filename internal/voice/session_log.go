@@ -2,8 +2,10 @@ package voice
 
 import (
 	"log"
+	"time"
 
 	"github.com/livekit/protocol/livekit"
+	"github.com/livekit/protocol/webhook"
 )
 
 type sessionSkipReason string
@@ -47,4 +49,20 @@ func logWebhookDropped(logger *log.Logger, event *livekit.WebhookEvent) {
 	}
 	logger.Printf("voice.webhook_dropped level=warn event_id=%s event=%s num_dropped=%d",
 		event.GetId(), event.GetEvent(), event.GetNumDropped())
+}
+
+func logWebhookPublished(logger *log.Logger, roomID string, event *livekit.WebhookEvent, receivedAt, publishedAt time.Time) {
+	switch event.GetEvent() {
+	case webhook.EventParticipantJoined, webhook.EventParticipantLeft, webhook.EventRoomFinished:
+	default:
+		return
+	}
+	createdAt := event.GetCreatedAt()
+	if createdAt <= 0 {
+		logger.Printf("voice.webhook_published event_id=%s event=%s room_id=%s created_at=0 publish_ms=%d",
+			event.GetId(), event.GetEvent(), roomID, publishedAt.Sub(receivedAt).Milliseconds())
+		return
+	}
+	logger.Printf("voice.webhook_published event_id=%s event=%s room_id=%s created_at=%d delivery_ms=%d publish_ms=%d",
+		event.GetId(), event.GetEvent(), roomID, createdAt, receivedAt.Sub(unixMillis(createdAt)).Milliseconds(), publishedAt.Sub(receivedAt).Milliseconds())
 }
