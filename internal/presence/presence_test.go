@@ -198,3 +198,16 @@ func TestService_OnlineUsers_ReturnsOnline(t *testing.T) {
 		t.Fatalf("OnlineUsers len = %d, want 2", len(users))
 	}
 }
+
+func TestService_UserCreatedWithoutCacheIncrementsTotal(t *testing.T) {
+	svc := NewService(&fakePublisher{}, &fakeStats{})
+	if err := svc.RefreshTotal(context.Background()); err != nil {
+		t.Fatalf("RefreshTotal erro: %v", err)
+	}
+
+	svc.UserCreated(context.Background())
+
+	if got := snapshotTotal(t, svc); got != 101 {
+		t.Errorf("Total = %d, want 101", got)
+	}
+}

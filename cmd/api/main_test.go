@@ -14,6 +14,9 @@ func productionConfig() *config.Config {
 		KeyValueURL:               "redis://localhost:6379/0",
 		KeyValuePrefix:            "test",
 		SessionRevalidateInterval: 5 * time.Minute,
+		SessionTTL:                7 * 24 * time.Hour,
+		SessionTouchWindow:        24 * time.Hour,
+		UsersTotalCacheTTL:        24 * time.Hour,
 		AppURL:                    "https://app.vozzera.com",
 		MailjetConfig: config.MailjetConfig{
 			APIKey:      "key",
@@ -57,6 +60,9 @@ func TestValidateBootConfigAllowsDevelopmentWithoutMailjet(t *testing.T) {
 		KeyValueURL:               "redis://localhost:6379/0",
 		KeyValuePrefix:            "test",
 		SessionRevalidateInterval: 5 * time.Minute,
+		SessionTTL:                7 * 24 * time.Hour,
+		SessionTouchWindow:        24 * time.Hour,
+		UsersTotalCacheTTL:        24 * time.Hour,
 	}
 
 	if err := validateBootConfig(cfg); err != nil {

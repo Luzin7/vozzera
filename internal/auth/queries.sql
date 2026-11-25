@@ -61,6 +61,9 @@ FROM sessions s
 JOIN users u ON u.id = s.user_id
 WHERE s.id = $1;
 
+-- name: ListActiveSessionIDs :many
+SELECT id FROM sessions WHERE id = ANY(sqlc.arg(ids)::uuid[]) AND expires_at > NOW();
+
 -- name: TouchSession :exec
 UPDATE sessions
 SET expires_at = $2

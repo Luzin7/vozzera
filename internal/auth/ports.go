@@ -33,6 +33,10 @@ type SessionRevoker interface {
 	RevokeUser(ctx context.Context, userID uuid.UUID) error
 }
 
+type UserObserver interface {
+	UserCreated(ctx context.Context)
+}
+
 type MailSender interface {
 	Send(to, subject, html string) error
 }

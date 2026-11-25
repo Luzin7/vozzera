@@ -92,38 +92,9 @@ func main() {
 	hub := realtime.NewHub()
 
 	presenceStats := &presenceStats{Queries: authQueries}
-	presenceSvc := presence.NewService(hub, presenceStats)
-	presenceCtx, presenceCancel := context.WithTimeout(
-		context.Background(),
-		5*time.Second,
-	)
-	defer presenceCancel()
-
-	go func() {
-		ticker := time.NewTicker(15 * time.Minute)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-rootCtx.Done():
-				return
-
-			case <-ticker.C:
-				ctx, cancel := context.WithTimeout(
-					rootCtx,
-					5*time.Second,
-				)
-
-				if err := presenceSvc.RefreshTotal(ctx); err != nil {
-					log.Printf("erro ao atualizar total de usuários: %v", err)
-				}
-
-				cancel()
-			}
-		}
-	}()
-
-	if err := presenceSvc.RefreshTotal(presenceCtx); err != nil {
+	usersTotalStore := keyvalue.NewUsersTotalStore(kvClient, cfg.KeyValueKeyPrefix(), cfg.UsersTotalCacheTTL)
+	presenceSvc := presence.NewService(hub, presenceStats, presence.WithTotalCache(usersTotalStore))
+	if err := presenceSvc.LoadTotal(context.Background()); err != nil {
 		log.Fatalf("erro ao carregar total de usuários: %v", err)
 	}
 
@@ -134,6 +105,9 @@ func main() {
 	sender := chat.NewSendMessageService(chatQueries, hub)
 	wsRouter := ws.NewRouter()
 
+	revocationBus := keyvalue.NewRevocationBus(kvClient, cfg.KeyValueKeyPrefix())
+	revoker := realtime.NewBroadcastRevoker(hub, revocationBus)
+
 	sessionAuth := auth.NewSessionAuthenticator(authQueries, cfg.SessionTouchWindow, cfg.SessionTTL)
 
 	wsHandler, err := ws.NewHandler(ws.HandlerDeps{
@@ -142,10 +116,12 @@ func main() {
 		SnapshotProviders: []ws.SnapshotProvider{
 			presenceSvc,
 		},
-		AllowedOrigins: cfg.CORSOrigins,
+		AllowedOrigins:   cfg.CORSOrigins,
+		MaxConnectionAge: cfg.WSMaxConnectionAge,
 		SessionRevalidation: realtime.SessionRevalidation{
 			Revalidator: sessionRevalidator{authenticator: sessionAuth},
-			Revoker:     hub,
+			Revoker:     revoker,
+			TouchWindow: cfg.SessionTouchWindow,
 			Interval:    cfg.SessionRevalidateInterval,
 		},
 	})
@@ -153,7 +129,19 @@ func main() {
 		log.Fatalf("Configuração do websocket inválida: %v", err)
 	}
 	var bgWg sync.WaitGroup
-	bgWg.Add(4)
+	bgWg.Add(7)
+	go func() {
+		defer bgWg.Done()
+		usersTotalStore.Subscribe(rootCtx, presenceSvc)
+	}()
+	go func() {
+		defer bgWg.Done()
+		presenceSvc.RunTotalRefresh(rootCtx, cfg.UsersTotalCacheTTL)
+	}()
+	go func() {
+		defer bgWg.Done()
+		revocationBus.Subscribe(rootCtx, realtime.NewSessionRevocationReceiver(hub, sessionLiveness{queries: authQueries}))
+	}()
 	go func() {
 		defer bgWg.Done()
 		voice.NewInstanceHeartbeat(voice.InstanceHeartbeatDeps{
@@ -192,6 +180,7 @@ func main() {
 			Username:  session.Username,
 			Role:      session.Role,
 			SessionID: session.ID,
+			ExpiresAt: session.ExpiresAt,
 		}, nil
 	})
 
@@ -219,7 +208,8 @@ func main() {
 		PasswordResetTTL: cfg.PasswordResetTTL,
 		AppURL:           cfg.AppURL,
 		Mailer:           mailer,
-		Revoker:          hub,
+		Revoker:          revoker,
+		UserObserver:     presenceSvc,
 		AuthMW:           authMw,
 	})
 
@@ -335,6 +325,12 @@ func validateBootConfig(cfg *config.Config) error {
 	if err := cfg.ValidateSessionRevalidateInterval(); err != nil {
 		return err
 	}
+	if err := cfg.ValidateSessionTTL(); err != nil {
+		return err
+	}
+	if err := cfg.ValidateDurations(); err != nil {
+		return err
+	}
 	if err := cfg.ValidateSwagger(); err != nil {
 		return err
 	}
@@ -393,19 +389,27 @@ func (s *presenceStats) ListUsers(ctx context.Context) ([]realtime.UserPresence,
 	return users, nil
 }
 
+type sessionLiveness struct {
+	queries *auth.Queries
+}
+
+func (l sessionLiveness) ActiveSessionIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	return l.queries.ListActiveSessionIDs(ctx, ids)
+}
+
 type sessionRevalidator struct {
 	authenticator *auth.SessionAuthenticator
 }
 
-func (r sessionRevalidator) RevalidateSession(ctx context.Context, sessionID uuid.UUID) error {
-	_, err := r.authenticator.AuthenticateSession(ctx, sessionID.String())
+func (r sessionRevalidator) RevalidateSession(ctx context.Context, sessionID uuid.UUID) (time.Time, error) {
+	claims, err := r.authenticator.AuthenticateSession(ctx, sessionID.String())
 	if err == nil {
-		return nil
+		return claims.ExpiresAt, nil
 	}
 	if auth.IsSessionInvalid(err) {
-		return realtime.ErrSessionInvalid(err)
+		return time.Time{}, realtime.ErrSessionInvalid(err)
 	}
-	return err
+	return time.Time{}, err
 }
 
 func logClientIPSource(header string) {

@@ -262,6 +262,30 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (I
 	return i, err
 }
 
+const listActiveSessionIDs = `-- name: ListActiveSessionIDs :many
+SELECT id FROM sessions WHERE id = ANY($1::uuid[]) AND expires_at > NOW()
+`
+
+func (q *Queries) ListActiveSessionIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listActiveSessionIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsers = `-- name: ListUsers :many
 SELECT id, username FROM users ORDER BY username
 `

@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -15,6 +16,10 @@ var (
 	ErrKeyValueURLRequired               = errors.New("KEY_VALUE_URL é obrigatória")
 	ErrKeyValuePrefixInvalid             = errors.New("KEY_VALUE_PREFIX é obrigatória e deve casar com ^[a-z0-9-]+$")
 	ErrSessionRevalidateIntervalTooShort = errors.New("WS_SESSION_REVALIDATE_INTERVAL deve ser de pelo menos 1m")
+	ErrSessionTTLNotAboveTouchWindow     = errors.New("SESSION_TTL deve ser maior que SESSION_TOUCH_WINDOW")
+	ErrUsersTotalCacheTTLNotPositive     = errors.New("USERS_TOTAL_CACHE_TTL deve ser maior que zero")
+	ErrWSMaxConnectionAgeNegative        = errors.New("WS_MAX_CONNECTION_AGE não pode ser negativa")
+	ErrDurationInvalid                   = errors.New("duração inválida")
 	ErrSwaggerCredentialsRequired        = errors.New("SWAGGER_BASIC_USER e SWAGGER_BASIC_PASSWORD são obrigatórias quando SWAGGER_ENABLED=true")
 	ErrMailjetAPIKeyRequired             = errors.New("MAILJET_API_KEY é obrigatória em produção")
 	ErrMailjetAPISecretRequired          = errors.New("MAILJET_API_SECRET é obrigatório em produção")
@@ -52,6 +57,8 @@ type Config struct {
 	SessionTTL                time.Duration
 	SessionTouchWindow        time.Duration
 	SessionRevalidateInterval time.Duration
+	WSMaxConnectionAge        time.Duration
+	UsersTotalCacheTTL        time.Duration
 	PasswordResetTTL          time.Duration
 	AppURL                    string
 	ClientIPHeader            string
@@ -59,6 +66,8 @@ type Config struct {
 	SwaggerBasicUser          string
 	SwaggerBasicPassword      string
 	MailjetConfig             MailjetConfig
+
+	invalidDurations []error
 }
 
 func Load() *Config {
@@ -69,7 +78,7 @@ func Load() *Config {
 		port = "8080"
 	}
 
-	return &Config{
+	cfg := &Config{
 		Environment:               resolveEnvironment(),
 		DatabaseURL:               os.Getenv("DATABASE_URL"),
 		InviteCode:                os.Getenv("INVITE_CODE"),
@@ -96,6 +105,37 @@ func Load() *Config {
 			FromName:    os.Getenv("MAIL_FROM_NAME"),
 		},
 	}
+
+	cfg.WSMaxConnectionAge = cfg.strictDurationEnv("WS_MAX_CONNECTION_AGE", 6*time.Hour)
+	cfg.UsersTotalCacheTTL = cfg.strictDurationEnv("USERS_TOTAL_CACHE_TTL", 24*time.Hour)
+
+	return cfg
+}
+
+func (c *Config) strictDurationEnv(key string, fallback time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		c.invalidDurations = append(c.invalidDurations, fmt.Errorf("%w: %s=%q", ErrDurationInvalid, key, raw))
+		return fallback
+	}
+	return d
+}
+
+func (c *Config) ValidateDurations() error {
+	if len(c.invalidDurations) > 0 {
+		return errors.Join(c.invalidDurations...)
+	}
+	if c.UsersTotalCacheTTL <= 0 {
+		return ErrUsersTotalCacheTTLNotPositive
+	}
+	if c.WSMaxConnectionAge < 0 {
+		return ErrWSMaxConnectionAgeNegative
+	}
+	return nil
 }
 
 func (c *Config) ValidateKeyValue() error {
@@ -111,6 +151,13 @@ func (c *Config) ValidateKeyValue() error {
 func (c *Config) ValidateSessionRevalidateInterval() error {
 	if c.SessionRevalidateInterval < time.Minute {
 		return ErrSessionRevalidateIntervalTooShort
+	}
+	return nil
+}
+
+func (c *Config) ValidateSessionTTL() error {
+	if c.SessionTTL <= c.SessionTouchWindow {
+		return ErrSessionTTLNotAboveTouchWindow
 	}
 	return nil
 }
